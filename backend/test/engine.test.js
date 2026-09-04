@@ -21,9 +21,9 @@ const { createWatchlist } = await import('../src/watchlist.js');
 const { createEngine, rank } = await import('../src/engine/index.js');
 const { createSurfacedStore } = await import('../src/engine/surfaced.js');
 const { Level } = await import('../src/engine/score.js');
-const { assertAllFinite, zScore, stdDev, safeDiv, normalizeMagnitude } = await import(
-  '../src/engine/numeric.js'
-);
+const { assertAllFinite, zScore, stdDev, safeDiv, normalizeMagnitude, saturatingMagnitude } =
+  await import('../src/engine/numeric.js');
+const { createSummaryService } = await import('../src/summary.js');
 const { BENCHMARK_SYMBOL } = await import('../src/symbols.js');
 
 /** Friday 2026-09-04 10:30 IST - inside the NSE session, and a whole minute. */
@@ -593,6 +593,283 @@ test('a source conflict is reported alongside the score', () => {
   assert.ok(item.conflict.spreadPct > 0.5);
   assert.deepEqual(item.conflict.observations.map((o) => o.source).sort(), ['alpha', 'beta']);
   assert.ok(Number.isFinite(item.meaningfulScore), 'and the score is still computed');
+});
+
+// ============================================ the four fixes (P0 follow-up)
+
+test('relative contributions scale with the excess instead of saturating', () => {
+  // The bug: a clamped mapping gave 1.0 to everything past the reference, so
+  // these two were indistinguishable.
+  const small = saturatingMagnitude(2.08, 1.5);
+  const large = saturatingMagnitude(20, 1.5);
+
+  assert.ok(small < large, `-2.08% (${small}) must contribute less than -20% (${large})`);
+  assert.ok(small < 0.7, `2.08% should not be near-maximal, got ${small}`);
+  assert.ok(large > 0.9, `20% should be near-maximal, got ${large}`);
+  assert.ok(large < 1, 'and never actually reach 1');
+
+  // Strictly increasing across the whole range, and sign-blind.
+  let previous = -1;
+  for (const m of [0, 0.1, 0.5, 1.5, 3, 8, 20, 100]) {
+    const value = saturatingMagnitude(m, 1.5);
+    assert.ok(value > previous, `must keep rising at ${m}%`);
+    assert.equal(value, saturatingMagnitude(-m, 1.5), 'direction does not change magnitude');
+    previous = value;
+  }
+
+  // The configured value is the half-contribution point.
+  assert.ok(Math.abs(saturatingMagnitude(1.5, 1.5) - 0.5) < 1e-9);
+});
+
+test('a bigger excess return produces a bigger score, end to end', () => {
+  const build = (benchmarkMove) => {
+    const h = harness({ overrides: { sectorMap: {} } });
+    h.watchlist.add(USER, 'STOCK');
+    // The stock is flat; only the benchmark moves, so the excess is entirely
+    // the benchmark's doing and scales with it.
+    seed(h.log, 'STOCK', { price: calm(100) });
+    seed(h.log, BENCHMARK_SYMBOL, { price: calmThenJump(20_000, benchmarkMove) });
+    return itemFor(h.engine.evaluate({ userId: USER }), 'STOCK');
+  };
+
+  const modest = build(0.02);
+  const huge = build(0.2);
+
+  assert.ok(Math.abs(modest.features.marketRelative.excessPct) > 1);
+  assert.ok(Math.abs(huge.features.marketRelative.excessPct) > 15);
+  assert.ok(
+    huge.scoreBreakdown.marketRelative.contribution >
+      modest.scoreBreakdown.marketRelative.contribution,
+    'a 20% excess must contribute more than a 2% one',
+  );
+});
+
+test('relative signals alone cannot lift a symbol above LOW', () => {
+  /**
+   * Relative-heavy weights, so the relative signals CAN reach MODERATE and the
+   * floor has something to actually cap. With the default 0.20/0.20 they
+   * cannot: the non-saturating curve keeps each below 1.0, so market plus
+   * sector tops out under the 0.40 MODERATE threshold on its own - which is
+   * the belt to the floor's braces, asserted separately below.
+   */
+  const { log, watchlist, engine } = harness({
+    overrides: {
+      sectorMap: { BYSTANDER: 'IT', PEER1: 'IT', PEER2: 'IT' },
+      weights: { priceAnomaly: 0.1, volumeAnomaly: 0.1, marketRelative: 0.4, sectorRelative: 0.4 },
+    },
+  });
+
+  // Flat price, flat volume: nothing whatsoever happened to THIS stock.
+  watchlist.add(USER, 'BYSTANDER');
+  seed(log, 'BYSTANDER', { price: () => 100 });
+  watchlist.markViewed(USER, 'BYSTANDER', T0 - 30 * 60_000);
+
+  // Its sector peers and the index, however, both ripped - so both relative
+  // signals are large and negative for the bystander.
+  for (const peer of ['PEER1', 'PEER2']) {
+    watchlist.add(USER, peer);
+    seed(log, peer, { price: calmThenJump(100, 0.2) });
+    watchlist.markViewed(USER, peer, T0 - 30 * 60_000);
+  }
+  seed(log, BENCHMARK_SYMBOL, { price: calmThenJump(20_000, 0.2) });
+
+  const item = itemFor(engine.evaluate({ userId: USER }), 'BYSTANDER');
+
+  assert.ok(
+    Math.abs(item.features.marketRelative.excessPct) > 10,
+    'the relative signal really is large',
+  );
+  assert.ok(Math.abs(item.features.priceAnomaly.z) < 0.75, 'the stock itself did nothing');
+  assert.ok(item.features.volumeAnomaly.ratio < 1.5, 'and nor did its turnover');
+  assert.ok(
+    item.meaningfulScore >= 0.4,
+    `the score genuinely reaches MODERATE territory: ${item.meaningfulScore}`,
+  );
+
+  assert.equal(item.level, 'LOW', 'but the level is capped');
+  assert.ok(item.levelFloor, 'and the cap is reported rather than silent');
+  assert.notEqual(item.levelFloor.cappedFrom, 'LOW');
+  assert.equal(item.levelFloor.reason, 'nothing_notable_about_this_stock');
+  assert.equal(item.needsAttention, false);
+
+  /**
+   * The score is NOT rewritten - it stays the honest output of the formula, so
+   * the published breakdown still reproduces it. Only the level is capped.
+   */
+  assert.ok(Math.abs(item.meaningfulScore - handComputedScore(item)) < 1e-4);
+});
+
+test('with default weights, relative signals cannot reach MODERATE at all', () => {
+  const { log, watchlist, engine } = harness({
+    overrides: { sectorMap: { STOCK: 'IT', PEER1: 'IT', PEER2: 'IT' } },
+  });
+
+  for (const symbol of ['STOCK', 'PEER1', 'PEER2']) {
+    watchlist.add(USER, symbol);
+    seed(log, symbol, { price: () => 100 });
+  }
+  seed(log, BENCHMARK_SYMBOL, { price: calmThenJump(20_000, 0.5) });
+
+  const item = itemFor(engine.evaluate({ userId: USER }), 'STOCK');
+
+  /**
+   * A consequence of the non-saturating curve worth pinning down: market and
+   * sector carry 0.20 each and neither contribution can reach 1.0, so together
+   * they stay under the 0.40 MODERATE threshold however violently the index
+   * moves. The floor is the explicit guarantee; this is the arithmetic one.
+   */
+  assert.ok(
+    item.meaningfulScore < 0.4,
+    `relative signals alone stay under MODERATE: ${item.meaningfulScore}`,
+  );
+  assert.equal(item.level, 'LOW');
+});
+
+test('the floor does not suppress a volume spike on a small move', () => {
+  const { log, watchlist, engine } = harness({ overrides: { sectorMap: {} } });
+  watchlist.add(USER, 'HEAVYTAPE');
+
+  /**
+   * The product's signature case, and the reason the floor tests turnover as
+   * well as price: a barely-moving stock trading at three times its normal
+   * volume. Gating the floor on the price z-score and the change alone would
+   * have capped exactly the finding this engine exists to surface.
+   */
+  seed(log, 'HEAVYTAPE', {
+    price: calm(100),
+    volume: (i) => (i === 150 ? 3200 : 1000),
+  });
+  seed(log, BENCHMARK_SYMBOL, { price: calm(20_000) });
+  watchlist.markViewed(USER, 'HEAVYTAPE', T0 - 30 * 60_000);
+
+  const item = itemFor(engine.evaluate({ userId: USER }), 'HEAVYTAPE');
+
+  assert.ok(item.features.volumeAnomaly.ratio >= 1.5, 'turnover is genuinely heavy');
+  assert.equal(item.levelFloor, null, 'so the floor stays out of the way');
+  assert.ok(item.reasons.includes('high_volume'));
+});
+
+test('the floor does not touch a symbol that genuinely moved', () => {
+  const { log, watchlist, engine } = harness({ overrides: { sectorMap: {} } });
+  watchlist.add(USER, 'MOVER');
+  seed(log, 'MOVER', { price: calmThenJump(100, 0.02), volume: (i) => (i === 150 ? 5000 : 1000) });
+  seed(log, BENCHMARK_SYMBOL, { price: calm(20_000) });
+  watchlist.markViewed(USER, 'MOVER', T0 - 30 * 60_000);
+
+  const item = itemFor(engine.evaluate({ userId: USER }), 'MOVER');
+
+  assert.ok(Math.abs(item.features.priceAnomaly.z) >= 0.75, 'its own move is notable');
+  assert.notEqual(item.level, 'LOW');
+  assert.equal(item.levelFloor, null, 'no cap applied');
+  assert.equal(item.needsAttention, true);
+});
+
+test('needsAttention is one field, so nothing can disagree about it', () => {
+  const { log, watchlist, engine, surfacedStore } = harness({ overrides: { sectorMap: {} } });
+  watchlist.add(USER, 'MOVER');
+  watchlist.add(USER, 'QUIET');
+  seed(log, 'MOVER', { price: calmThenJump(100, 0.03), volume: (i) => (i === 150 ? 6000 : 1000) });
+  seed(log, 'QUIET', { price: calm(100) });
+  seed(log, BENCHMARK_SYMBOL, { price: calm(20_000) });
+  for (const s of ['MOVER', 'QUIET']) watchlist.markViewed(USER, s, T0 - 30 * 60_000);
+
+  const evaluation = engine.evaluate({ userId: USER });
+
+  // The flag agrees with the level for every item, by construction.
+  for (const item of evaluation.items) {
+    assert.equal(
+      item.needsAttention,
+      item.level === 'HIGH' || item.level === 'MODERATE',
+      `${item.symbol}: flag must match level`,
+    );
+  }
+
+  // And the summary counts the same set the UI chip would filter on.
+  const summaryService = createSummaryService({
+    engine,
+    watchlist,
+    surfacedStore,
+    clock: () => T0,
+  });
+  const summary = summaryService.build({ userId: USER, record: false });
+  const chipCount = evaluation.items.filter((i) => i.needsAttention).length;
+
+  assert.equal(
+    summary.counts.needsAttention,
+    chipCount,
+    'the banner and the chip must never disagree on one screen',
+  );
+});
+
+test('the benchmark reports its own value and change', () => {
+  const { log, watchlist, engine } = harness({ overrides: { sectorMap: {} } });
+  watchlist.add(USER, 'STOCK');
+  seed(log, 'STOCK', { price: calm(100) });
+  seed(log, BENCHMARK_SYMBOL, { price: calmThenJump(20_000, 0.01) });
+
+  const { benchmark } = engine.evaluate({ userId: USER });
+
+  assert.equal(benchmark.symbol, BENCHMARK_SYMBOL);
+  assert.ok(benchmark.latest, 'the current index level is surfaced');
+  assert.ok(benchmark.latest.price > 15_000);
+  assert.ok(Number.isFinite(benchmark.returnPct), 'and its change');
+  assert.ok(benchmark.returnPct > 0.5, `expected roughly +1%, got ${benchmark.returnPct}`);
+  assert.equal(benchmark.horizonMs, BAR, 'measured over the horizon the rows were scored against');
+
+  // It is the same figure the per-symbol comparison used.
+  const item = itemFor(engine.evaluate({ userId: USER }), 'STOCK');
+  assert.equal(item.features.marketRelative.benchmarkReturnPct, benchmark.returnPct);
+});
+
+test('with no new observation there is no delta, not a delta of zero', () => {
+  const { log, watchlist, engine } = harness({ overrides: { sectorMap: {} } });
+  watchlist.add(USER, 'FROZENFEED');
+
+  // History stops well before "now", so the feed is stale...
+  seed(log, 'FROZENFEED', { price: calm(100), endAt: T0 - 20 * 60_000 });
+  // ...and the user looked AFTER the last observation arrived.
+  watchlist.markViewed(USER, 'FROZENFEED', T0 - 5 * 60_000);
+
+  const item = itemFor(engine.evaluate({ userId: USER }), 'FROZENFEED');
+
+  assert.equal(item.dataQuality, 'STALE');
+
+  /**
+   * The bug this guards: baseline and latest are the same observation, so the
+   * arithmetic yields 0.00 (0.00%) - which reads as "we checked, the price is
+   * unchanged". The data does not support that. It supports "nothing new has
+   * been observed", which is a different fact leading to a different
+   * conclusion about whether the market is quiet or the feed is broken.
+   */
+  assert.equal(item.changeSinceViewed.available, false);
+  assert.equal(item.changeSinceViewed.reason, 'no_new_observation_since_view');
+  assert.equal(item.changeSinceViewed.percent, undefined, 'no 0.00% is emitted');
+  assert.equal(item.changeSinceViewed.absolute, undefined);
+
+  // The last known price is still reported, with its age.
+  assert.equal(item.changeSinceViewed.lastKnownPrice, item.latest.price);
+  assert.ok(item.freshness.ageMs >= 20 * 60_000);
+  assert.ok(!item.reasons.includes('change_since_viewed'));
+});
+
+test('a genuinely unchanged price with a new observation still reports zero', () => {
+  const { log, watchlist, engine } = harness({ overrides: { sectorMap: {} } });
+  watchlist.add(USER, 'FLATBUTLIVE');
+
+  // The price never moves, but observations keep arriving - so we DID check.
+  seed(log, 'FLATBUTLIVE', { price: () => 100 });
+  watchlist.markViewed(USER, 'FLATBUTLIVE', T0 - 30 * 60_000);
+
+  const item = itemFor(engine.evaluate({ userId: USER }), 'FLATBUTLIVE');
+
+  /**
+   * The distinction that makes the previous test meaningful: "we looked and it
+   * is the same" is a real measurement and must still be reported as 0.00%.
+   * Suppressing this one too would throw away information.
+   */
+  assert.equal(item.changeSinceViewed.available, true);
+  assert.equal(item.changeSinceViewed.percent, 0);
+  assert.equal(item.changeSinceViewed.absolute, 0);
 });
 
 // ================================================================= ranking

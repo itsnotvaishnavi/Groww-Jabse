@@ -180,6 +180,10 @@ export function createApi({
         // --- the engine ---
         meaningfulScore: item.meaningfulScore,
         level: item.level,
+        /** The one definition of attention-worthy; the UI chip reads this. */
+        needsAttention: item.needsAttention,
+        /** Set only when the level floor lowered the level. */
+        levelFloor: item.levelFloor,
         confidence: item.confidence,
         confidenceComponents: item.confidenceComponents,
         changeSinceViewed: item.changeSinceViewed,

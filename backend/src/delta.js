@@ -23,6 +23,8 @@ export const NoBaselineReason = {
   NO_OBSERVATION_AT_LAST_VIEW: 'no_observation_at_last_view',
   /** We have no current observation to compare against. */
   NO_CURRENT_OBSERVATION: 'no_current_observation',
+  /** The newest observation IS the one they saw - no change is computable. */
+  NO_NEW_OBSERVATION_SINCE_VIEW: 'no_new_observation_since_view',
 };
 
 /**
@@ -43,6 +45,22 @@ export function computeDelta({ baseline, latest, lastViewedAt }) {
     return {
       hasBaseline: false,
       reason: NoBaselineReason.NO_OBSERVATION_AT_LAST_VIEW,
+      current: latest.price,
+      lastViewedAt,
+    };
+  }
+
+  /**
+   * The same guard as engine/features.js: if the newest observation is the one
+   * the user already saw, there is no delta to report - diffing it against
+   * itself would claim "unchanged" when the truth is "nothing new observed".
+   * Kept in step deliberately, so the degraded path cannot contradict the
+   * engine about the same question.
+   */
+  if (latest.timestamp <= baseline.timestamp) {
+    return {
+      hasBaseline: false,
+      reason: NoBaselineReason.NO_NEW_OBSERVATION_SINCE_VIEW,
       current: latest.price,
       lastViewedAt,
     };

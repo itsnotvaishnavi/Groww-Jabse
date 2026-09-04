@@ -29,7 +29,7 @@ testable, and making it explainable is what this project is.**
 ```bash
 npm install
 npm start                 # http://localhost:3000
-npm test                  # 85 tests, no network / clock / filesystem
+npm test                  # 96 tests, no network / clock / filesystem
 npm run demo              # build the demo scenario and print it
 ```
 
@@ -88,6 +88,48 @@ feature carries `available`, a machine-readable `reason`, and its own
 stock's level would change because you added an unrelated stock — the label
 would describe the watchlist rather than the instrument, and the
 already-surfaced fingerprint would churn every time the list did. Tested.
+
+### Relative signals scale; they do not saturate
+
+The market- and sector-relative contributions use `m / (m + k)` rather than a
+clamp. A clamped mapping gave **1.0** to any excess past its reference, so a
+−2% excess and a −20% excess contributed identically — and those are not the
+same event. The curve is strictly increasing over the whole range and only
+approaches 1 asymptotically, so bigger is always bigger. `k` is the
+half-contribution point, which makes it a meaningful thing to configure.
+
+### The level floor: your stock outranks the index
+
+Relative signals **alone** cannot carry a symbol above `LOW`. If a stock's own
+move is unremarkable, its turnover is normal, *and* you have seen nothing change
+since your last visit, then whatever the index did, nothing much happened to
+**your** stock — and calling that attention-worthy would be the engine
+mistaking context for news.
+
+Turnover is part of that test deliberately. Gating only on the price z-score and
+the change would have suppressed the volume-spike case — a 0.4% move on three
+times normal volume — which is the most valuable thing this engine finds and the
+one a percentage-change watchlist always misses. Volume is a fact about *this*
+stock, not about the index.
+
+The score is **not** rewritten when the floor applies: it stays the honest
+output of the formula, so the published breakdown still reproduces it. Only the
+level is capped, and the response carries `levelFloor` so the UI can say why a
+0.44 is showing as `LOW`. As it happens the default weights make this
+unreachable from relative signals alone — market and sector carry 0.20 each and
+neither can reach 1.0 — so the floor is the explicit guarantee and the
+arithmetic is the implicit one. Both are tested.
+
+### One definition of "needs attention"
+
+The engine computes `needsAttention` once per item and the summary banner, the
+UI filter chip and the ranking all read that field. These had drifted into two
+independent definitions — the banner counted `HIGH`/`MODERATE` while the chip
+counted stale-or-conflicting rows — so one screen could show "Needs attention 0"
+beside "2 deserve your attention". Two definitions of one word is a bug however
+defensible each is separately. Data health is still visible, through the
+freshness pill and `dataQuality`, but it is a different question from
+meaningfulness.
 
 ### Score and confidence are different things
 
@@ -244,6 +286,18 @@ itself on first render and could never be revisited.
 A new watchlist entry starts at `NULL`, which is meaningfully different from
 "viewed at the moment it was added" — defaulting to now would silently claim the
 user had already seen a price.
+
+And **no new observation is not a change of zero.** If the newest observation is
+the one you already saw — exactly what a stale feed produces — diffing it against
+itself yields `0.00 (0.00%)`, which reads as "we checked, the price is
+unchanged". The data does not support that. The row reports *no new observation
+since you looked* and shows the last known price with its age instead. The
+distinction matters because the two statements lead to opposite conclusions about
+whether the market is quiet or the feed is broken.
+
+Note this triggers on the absence of a newer observation, **not** on staleness: a
+stale row that does have a genuine delta from before its feed stopped still
+reports it, because hiding that would throw away a real measurement.
 
 ### Already-surfaced state
 
@@ -404,13 +458,17 @@ Everything lives in [config.js](backend/src/config.js); nothing else reads
 | `ENGINE_Z_CLAMP` | `6` | One bad tick cannot dominate |
 | `ENGINE_W_*` | `.35/.25/.20/.20` | Signal weights |
 | `ENGINE_LEVEL_MODERATE/HIGH` | `0.4` / `0.7` | Level thresholds |
+| `ENGINE_RELATIVE_HALF_PCT` | `1.5` | Half-contribution point for the relative signals |
+| `ENGINE_FLOOR_MIN_Z` | `0.75` | Below this the stock's own move is negligible |
+| `ENGINE_FLOOR_MIN_CHANGE_PCT` | `0.25` | Below this your visible change is negligible |
+| `ENGINE_FLOOR_MIN_VOLUME` | `1.5` | Below this the turnover is negligible |
 | `ENGINE_LONG_ABSENCE_MS` | `86400000` | Past this, the summary aggregates |
 | `SECTOR_MIN_PEERS` | `2` | One peer is not a sector |
 
 ## Tests
 
 ```bash
-npm test    # 85 tests
+npm test    # 96 tests
 ```
 
 No network, no filesystem, no uncontrolled clock — in-memory SQLite, stub

@@ -115,6 +115,30 @@ export function normalizeMagnitude(magnitude, fullContributionAt) {
   return ratio === null ? 0 : clamp(ratio, 0, 1);
 }
 
+/**
+ * Map a magnitude onto [0, 1) without ever saturating.
+ *
+ * `normalizeMagnitude` clamps: everything at or beyond the reference point
+ * scores exactly 1.0, so a 2% excess return and a 20% one contribute
+ * identically - which is wrong, because one of those is a normal afternoon and
+ * the other is an event. This curve is strictly increasing over the whole
+ * domain and only approaches 1 asymptotically, so bigger is always bigger:
+ *
+ *     m / (m + halfAt)
+ *
+ * `halfAt` is the half-contribution point, which makes it a directly meaningful
+ * thing to configure: at halfAt the signal contributes 0.5, at 3x halfAt it
+ * contributes 0.75, and it never quite reaches 1.
+ */
+export function saturatingMagnitude(magnitude, halfAt) {
+  const m = Math.abs(finiteOr(magnitude, 0));
+  const k = Math.abs(finiteOr(halfAt, 0));
+  if (k === 0) return m > 0 ? 1 : 0;
+
+  const ratio = safeDiv(m, m + k);
+  return ratio === null ? 0 : clamp(ratio, 0, 1);
+}
+
 /** Round for presentation without ever emitting a non-finite value. */
 export function round(value, decimals = 2) {
   if (!isFinite_(value)) return null;

@@ -194,7 +194,42 @@ export const config = {
      */
     zFullContribution: num(process.env.ENGINE_Z_FULL, 3),
     volumeRatioFullContribution: num(process.env.ENGINE_VOLUME_FULL, 3),
-    relativeMoveFullContributionPct: Number(process.env.ENGINE_RELATIVE_FULL_PCT ?? 1.5),
+
+    /**
+     * The HALF-contribution point for the relative signals, not the full one.
+     *
+     * These two use a non-saturating curve (see numeric.js
+     * saturatingMagnitude) because a clamped one made a -2% excess return and a
+     * -20% one contribute exactly the same 1.0 - and those are not the same
+     * event. At this value the signal contributes 0.5, at three times it 0.75,
+     * and it approaches 1 without reaching it, so a larger excess always scores
+     * higher than a smaller one.
+     */
+    relativeMoveHalfContributionPct: Number(process.env.ENGINE_RELATIVE_HALF_PCT ?? 1.5),
+
+    /**
+     * THE LEVEL FLOOR.
+     *
+     * Relative signals alone must not carry a symbol to MODERATE. If a stock's
+     * own move is unremarkable (a negligible z-score) AND the user has seen
+     * nothing change (a negligible delta since their last visit), then the
+     * honest headline is "nothing much happened to your stock" - even if the
+     * index moved enough to make its excess return look interesting.
+     * "Nothing much happened to your stock" outranks "but the index moved."
+     *
+     * The score is still reported as computed; only the level is capped, and
+     * the response says the cap was applied.
+     */
+    levelFloorMinZ: Number(process.env.ENGINE_FLOOR_MIN_Z ?? 0.75),
+    levelFloorMinChangePct: Number(process.env.ENGINE_FLOOR_MIN_CHANGE_PCT ?? 0.25),
+    /**
+     * Turnover is part of the floor test too. Gating only on the price z-score
+     * and the user-visible change would have suppressed the volume-spike case -
+     * a 0.4% move on three times normal volume - which is the most valuable
+     * thing this engine finds. Heavy trading is a fact about this stock, so it
+     * means something did happen here.
+     */
+    levelFloorMinVolumeRatio: Number(process.env.ENGINE_FLOOR_MIN_VOLUME ?? 1.5),
 
     /**
      * Signal weights. They sum to 1.0 over all four signals, and the score is

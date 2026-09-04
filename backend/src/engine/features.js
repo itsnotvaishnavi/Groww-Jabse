@@ -51,6 +51,28 @@ export function changeSinceViewed({ latest, baseline, lastViewedAt }) {
   if (lastViewedAt == null) return unavailable('never_viewed');
   if (!baseline) return unavailable('no_observation_at_last_view', { lastViewedAt });
 
+  /**
+   * NO NEW OBSERVATION IS NOT A CHANGE OF ZERO.
+   *
+   * If the newest observation is the same one the user already saw - which is
+   * exactly what a stale feed produces - then diffing it against itself yields
+   * "0.00 (0.00%)", which reads as "we checked and the price is unchanged".
+   * That is a claim the data does not support. The truth is that nothing new
+   * has been observed since they looked, and the two statements would lead a
+   * user to opposite conclusions about whether the market is quiet or the feed
+   * is broken.
+   *
+   * The row still shows the last known price with its age and freshness state;
+   * it simply does not pretend to a delta it cannot compute.
+   */
+  if (latest.timestamp <= baseline.timestamp) {
+    return unavailable('no_new_observation_since_view', {
+      lastViewedAt,
+      lastKnownPrice: latest.price,
+      lastKnownAt: latest.timestamp,
+    });
+  }
+
   const absolute = latest.price - baseline.price;
   const percent = safeDiv(absolute, baseline.price);
   if (percent === null) return unavailable('unusable_baseline_price');

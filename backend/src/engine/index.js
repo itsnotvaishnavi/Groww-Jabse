@@ -29,11 +29,14 @@ import { assertAllFinite, round } from './numeric.js';
 import { buildReasons } from './reasons.js';
 import {
   Level,
+  applyLevelFloor,
   confidenceFor,
   dataQualityFor,
   levelFor,
+  needsAttentionFor,
   scoreFeatures,
 } from './score.js';
+import { latestSpanReturn, spanReturns } from './returns.js';
 import { fingerprintFor } from './surfaced.js';
 
 /**
@@ -81,7 +84,9 @@ export function createEngine({
     engine.zClamp,
     engine.zFullContribution,
     engine.volumeRatioFullContribution,
-    engine.relativeMoveFullContributionPct,
+    engine.relativeMoveHalfContributionPct,
+    engine.levelFloorMinZ,
+    engine.levelFloorMinChangePct,
     engine.weights,
     engine.levels,
     engine.sectorMinPeers,
@@ -204,7 +209,16 @@ export function createEngine({
       });
 
       const scoreResult = scoreFeatures(features, engine);
-      const level = levelFor(scoreResult.score, engine);
+
+      /**
+       * The score is what the formula says; the level is what we are willing
+       * to tell the user. The floor can lower the second without touching the
+       * first, so the published breakdown still reproduces the published score.
+       */
+      const scoredLevel = levelFor(scoreResult.score, engine);
+      const floor = applyLevelFloor({ level: scoredLevel, features, engine });
+      const level = floor.level;
+
       const { confidence, components } = confidenceFor({
         features,
         freshness,
@@ -240,6 +254,13 @@ export function createEngine({
 
         meaningfulScore: scoreResult.score,
         level,
+        /** ONE definition, read by the summary banner and the UI chip alike. */
+        needsAttention: needsAttentionFor(level),
+        /**
+         * Present only when the floor lowered the level, so the UI can explain
+         * why a score of 0.44 is showing as LOW rather than looking broken.
+         */
+        levelFloor: floor.capped ? floor : null,
         confidence,
         confidenceComponents: components,
 
@@ -276,10 +297,27 @@ export function createEngine({
         levels: engine.levels,
         benchmarkSymbol: engine.benchmarkSymbol,
       },
+      /**
+       * The benchmark, surfaced rather than left implicit. It is ingested and
+       * it decides the market-relative signal for every row, so the UI showing
+       * "Market: n/a" while quietly using NIFTY to score everything was
+       * hiding its own working.
+       *
+       * The return is measured over the same anomaly horizon the per-symbol
+       * comparison uses, so the number in the sidebar is the number the rows
+       * were scored against - not a differently-windowed figure that happens
+       * to be nearby.
+       */
       benchmark: {
         symbol: engine.benchmarkSymbol,
         latest: snapshotLog.latest(engine.benchmarkSymbol),
         bars: benchmarkBars.filter(Boolean).length,
+        returnPct: (() => {
+          const spanBars = Math.max(1, Math.round(engine.anomalyHorizonMs / engine.barMs));
+          const r = latestSpanReturn(spanReturns(benchmarkBars, spanBars));
+          return r === null ? null : round(r * 100, 3);
+        })(),
+        horizonMs: engine.anomalyHorizonMs,
       },
       items: ranked,
     };

@@ -86,9 +86,13 @@ export function createSummaryService({ engine, watchlist, surfacedStore, clock =
       (item) => item.changeSinceViewed.available && item.changeSinceViewed.percent !== 0,
     );
 
-    const needsAttention = evaluation.items.filter(
-      (item) => item.level === Level.HIGH || item.level === Level.MODERATE,
-    );
+    /**
+     * Read from the engine's per-item flag rather than re-deriving it here.
+     * This had been a second, independent definition of "attention-worthy",
+     * which is how the same screen came to show "Needs attention 0" beside
+     * "2 deserve your attention".
+     */
+    const needsAttention = evaluation.items.filter((item) => item.needsAttention);
 
     const unseen = evaluation.items.filter((item) => item.lastViewedAt == null);
 

@@ -16,7 +16,7 @@
  * stale feed with twenty samples is high-score and low-confidence, and
  * collapsing those into one number would throw away the more actionable half.
  */
-import { clamp, normalizeMagnitude, round } from './numeric.js';
+import { clamp, normalizeMagnitude, round, saturatingMagnitude } from './numeric.js';
 
 export const Level = {
   LOW: 'LOW',
@@ -52,16 +52,22 @@ const CONTRIBUTORS = {
     return normalizeMagnitude(excess, engine.volumeRatioFullContribution - 1);
   },
 
+  /**
+   * The relative signals scale with the size of the excess rather than
+   * clamping. A clamped mapping reported 1.0 for anything past 1.5%, so a
+   * -2.08% excess and a -20% excess contributed identically - and those are not
+   * remotely the same event. See numeric.js saturatingMagnitude.
+   */
   marketRelative(features, engine) {
     const f = features.marketRelative;
     if (!f.available) return null;
-    return normalizeMagnitude(f.excessPct, engine.relativeMoveFullContributionPct);
+    return saturatingMagnitude(f.excessPct, engine.relativeMoveHalfContributionPct);
   },
 
   sectorRelative(features, engine) {
     const f = features.sectorRelative;
     if (!f.available) return null;
-    return normalizeMagnitude(f.excessPct, engine.relativeMoveFullContributionPct);
+    return saturatingMagnitude(f.excessPct, engine.relativeMoveHalfContributionPct);
   },
 };
 
@@ -139,6 +145,81 @@ export function levelFor(score, engine) {
   if (score >= engine.levels.high) return Level.HIGH;
   if (score >= engine.levels.moderate) return Level.MODERATE;
   return Level.LOW;
+}
+
+/**
+ * The level floor: relative signals alone cannot carry a symbol above LOW.
+ *
+ * If the stock's own movement is unremarkable AND the user has seen nothing
+ * change since their last visit, then whatever the index or the sector did,
+ * nothing much happened to *their* stock - and telling them it deserves
+ * attention would be the engine mistaking context for news.
+ *
+ * An unavailable signal counts as negligible on purpose: if we could not
+ * measure the stock's own move, we have no evidence it did anything notable,
+ * and absence of evidence must not be promoted to a MODERATE.
+ *
+ * The score is deliberately NOT altered - it is the honest output of the
+ * formula, and silently rewriting it would break the published breakdown that
+ * is supposed to reproduce it. Only the level is capped, and the caller is told.
+ */
+export function applyLevelFloor({ level, features, engine }) {
+  if (level === Level.LOW) return { level, capped: false };
+
+  const price = features.priceAnomaly;
+  const change = features.changeSinceViewed;
+  const volume = features.volumeAnomaly;
+
+  const zMagnitude = price.available ? Math.abs(price.z) : 0;
+  const changeMagnitude = change.available ? Math.abs(change.percent) : 0;
+  const volumeRatio = volume.available ? volume.ratio : 1;
+
+  /**
+   * Volume is part of the test, and that is a deliberate reading of "on
+   * relative signals alone".
+   *
+   * Gating on the price z-score and the user-visible change ONLY would have
+   * suppressed the volume-spike case - a stock moving 0.4% on three times its
+   * normal turnover - which is the single most valuable thing this engine
+   * finds and the one an ordinary percentage-change watchlist always misses.
+   * Volume is a fact about THIS stock, not about the index, so heavy trading
+   * means something did happen here and the floor must not fire.
+   */
+  const ownMoveNegligible = zMagnitude < engine.levelFloorMinZ;
+  const userVisibleChangeNegligible = changeMagnitude < engine.levelFloorMinChangePct;
+  const turnoverNegligible = volumeRatio < engine.levelFloorMinVolumeRatio;
+
+  if (ownMoveNegligible && userVisibleChangeNegligible && turnoverNegligible) {
+    return {
+      level: Level.LOW,
+      capped: true,
+      cappedFrom: level,
+      reason: 'nothing_notable_about_this_stock',
+      zMagnitude: round(zMagnitude, 2),
+      changeMagnitude: round(changeMagnitude, 2),
+      volumeRatio: round(volumeRatio, 2),
+    };
+  }
+
+  return { level, capped: false };
+}
+
+/**
+ * ONE definition of attention-worthy, used by the watchlist chip, the summary
+ * banner and the ranking alike.
+ *
+ * These had drifted apart: the summary counted HIGH and MODERATE while the UI
+ * chip counted stale-or-conflicting rows, so the same screen could show
+ * "Needs attention 0" beside "2 deserve your attention". Two definitions of one
+ * word is a bug however each is individually defensible, so the engine computes
+ * it once per item and everything else reads that field.
+ *
+ * Note it is deliberately about MEANINGFULNESS, not data health: a stale feed
+ * is reported through `dataQuality` and the freshness pill, which is a separate
+ * question from whether the market did something worth looking at.
+ */
+export function needsAttentionFor(level) {
+  return level === Level.HIGH || level === Level.MODERATE;
 }
 
 /**

@@ -179,6 +179,14 @@ function deltaCell(item) {
         'No observation recorded when you last looked, so there is nothing to diff yet',
       no_current_observation: 'Waiting for the first observation from the feed',
       unusable_baseline_price: 'The recorded baseline price cannot be used',
+      /**
+       * Deliberately not "0.00 (0.00%)". Diffing the newest observation against
+       * itself would claim the price is unchanged, when what actually happened
+       * is that nothing new arrived - and those lead a user to opposite
+       * conclusions about whether the market is quiet or the feed is down. The
+       * last known price and its age are already in the price column.
+       */
+      no_new_observation_since_view: 'No new observation since you looked',
     };
     return `<span class="chg--none">${escapeHtml(reasons[change.reason] ?? 'No baseline')}</span>`;
   }
@@ -478,6 +486,20 @@ function detailPanel(item) {
     × depth ${item.confidenceComponents.depth}
     × coverage ${item.confidenceComponents.coverage}
     = <strong>${item.confidence}</strong>
+    ${
+      /**
+       * Without this line a score of 0.44 showing as LOW looks like a bug. The
+       * floor is a deliberate product rule, so it says so, with the two numbers
+       * that triggered it.
+       */
+      item.levelFloor
+        ? `<br /><span class="detail__floor">level capped at LOW from ${escapeHtml(
+            item.levelFloor.cappedFrom,
+          )} — the stock's own move (${item.levelFloor.zMagnitude}σ) and your change
+          since last looking (${item.levelFloor.changeMagnitude}%) were both negligible,
+          so the relative signals alone do not earn attention</span>`
+        : ''
+    }
   </div>`;
 
   const change = f.changeSinceViewed;
@@ -572,7 +594,14 @@ const FILTERS = {
   all: () => true,
   changed: (i) => i.changeSinceViewed.available && i.changeSinceViewed.percent !== 0,
   unseen: (i) => !i.changeSinceViewed.available,
-  attention: (i) => i.freshness.isStale || Boolean(i.conflict),
+  /**
+   * The engine's own flag, not a second definition. This chip used to count
+   * stale-or-conflicting rows while the summary banner counted HIGH and
+   * MODERATE, so one screen could read "Needs attention 0" next to "2 deserve
+   * your attention". Data health is still visible - through the freshness pill
+   * and dataQuality - but it is a different question from meaningfulness.
+   */
+  attention: (i) => i.needsAttention,
 };
 
 function sortItems(items, mode) {
@@ -627,6 +656,38 @@ function renderChipCounts(items) {
   }
 }
 
+/**
+ * The benchmark's own value and change.
+ *
+ * The sidebar used to show "Market: n/a" whenever exchange hours did not apply
+ * to the active source - which was every simulator run - while NIFTY was being
+ * ingested and used to score the market-relative signal on every row. The panel
+ * was hiding its own working. The return is over the same horizon the rows were
+ * scored against, so this is the figure their comparison used.
+ */
+function benchmarkRow(benchmark) {
+  if (!benchmark?.latest) {
+    return `<div class="kv"><span class="kv__k">Benchmark</span>
+      <span class="kv__v detail__v--off">no data yet</span></div>`;
+  }
+
+  const change =
+    benchmark.returnPct == null
+      ? '<span class="flat">—</span>'
+      : `<span class="${directionClass(benchmark.returnPct)}">${signed(
+          benchmark.returnPct,
+        )}%</span>`;
+
+  return `<div class="kv">
+    <span class="kv__k">${escapeHtml(benchmark.symbol)}</span>
+    <span class="kv__v">${inr.format(benchmark.latest.price)} ${change}</span>
+  </div>
+  <div class="kv">
+    <span class="kv__k">over</span>
+    <span class="kv__v">${duration(benchmark.horizonMs)}</span>
+  </div>`;
+}
+
 function renderStatus(payload) {
   const { source, market } = payload;
 
@@ -665,9 +726,7 @@ function renderStatus(payload) {
             source.delayMs / 60_000,
           )} min</span></div>`
     }
-    <div class="kv"><span class="kv__k">Market</span><span class="kv__v">${
-      market.appliesToSource ? (market.open ? 'open' : 'closed') : 'n/a'
-    }</span></div>
+    ${benchmarkRow(payload.benchmark)}
     <p class="card__note">${escapeHtml(marketLine)}</p>`;
 }
 
