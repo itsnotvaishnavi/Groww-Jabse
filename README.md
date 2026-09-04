@@ -29,8 +29,9 @@ testable, and making it explainable is what this project is.**
 ```bash
 npm install
 npm start                 # http://localhost:3000
-npm test                  # 151 tests, no network / clock / filesystem
-npm run demo              # build the demo scenario and print it
+npm test                  # 189 tests, no network / clock / filesystem
+npm run demo              # the full fixture
+npm run demo -- stock_outperforms 24h   # a named scenario
 ```
 
 Requires Node 22+ (developed on 24). No API keys, no configuration, no
@@ -222,6 +223,76 @@ stale reading suppress the real crossing that follows.
 Evaluation hangs off the ingestion tick, because the moment new observations
 land is exactly when a crossing can have happened — so an alert fires whether or
 not anyone has the page open.
+
+### "Why wasn't I alerted?"
+
+An alert system that only ever says nothing is unauditable. For any alert that
+did not fire, the answer is specific and computed from the engine — never a
+generic message:
+
+| Situation | What it says |
+|---|---|
+| Below a price threshold | `Currently ₹1412.30 — ₹37.70 below your ₹1450 threshold` |
+| Attention rule unmet | `Attention is MODERATE, not HIGH: the score is 0.43 and HIGH needs 0.7` |
+| Stale feed | `Not evaluated: the newest observation is stale (1502s old). Alerts only run against live or delayed data.` |
+| Already fired | `Already fired at ₹1352. It will not fire again until the value comes back past ₹1348.65` |
+| No baseline | `you have not opened this symbol, so there is no baseline to compare against` |
+
+Alongside every one of those sit the **feature facts** that produced it, each
+carrying its own number: *price movement is not unusual for this stock (0.4σ)*,
+*volume is normal (1.0×)*, *the market moved similarly (+0.084% vs +0.041%)*,
+*sector comparison unavailable (insufficient_peers)*.
+
+Three things make it trustworthy rather than decorative:
+
+- **A stale feed is reported on its own, and never alongside "condition not
+  met".** The rule was not checked and found wanting; it was not checked at all.
+  `met` is `null`, not `false`. A permanently stale feed must not be able to
+  hide behind language that suggests a quiet market.
+- **"Measured and ordinary" and "could not measure" are different statements.**
+  Both produce a low score and only one means the market was calm.
+- **The explainer and the evaluator read the same rules.** Both import them from
+  `alert-rules.js`, which exists precisely so neither keeps a private copy —
+  an audit trail that disagrees with the thing it audits is worse than none.
+  There is a test that runs a diagnosis and an evaluation side by side and
+  asserts they agree on every verdict.
+
+The mirror case is recorded too: a fired alert stores its rule, the value that
+crossed it and which signals contributed — **captured at fire time**, because by
+the time anyone reads the notification the market has moved and a recomputed
+explanation would describe a different moment.
+
+No LLM anywhere in this path. Every sentence is a template over a real feature
+value.
+
+### Demo scenarios
+
+Named, seeded and reproducible. `npm run demo -- <condition> [timeAway]`.
+
+| Condition | Produces |
+|---|---|
+| `normal` | All LOW — the baseline to read the others against |
+| `high_volume` | MODERATE on turnover alone, price move unremarkable |
+| `stock_outperforms` | **HIGH with all four signals, sector included** |
+| `market_wide` | LOW despite a 6σ move — the relative signals cancel |
+| `data_delay` | STALE, confidence halved, alerts refusing to fire |
+| `source_conflict` | A 0.9% disagreement reported, not silently resolved |
+
+Time away — 1h, 6h, 24h, 2d — is the existing absence override, now named and
+one click in the UI. It changes only the reported duration and whether the
+summary enumerates or aggregates, never a score.
+
+**The cold open is asserted, not assumed.** `stock_outperforms` must produce
+HIGH *with the sector signal available*, because a HIGH reached on three signals
+with sector renormalised away does not demonstrate the sector comparison at all.
+The first version of that scenario silently failed this: its move completed an
+hour before the end, outside the engine's fifteen-minute anomaly horizon, so it
+scored 0.29 and LOW. The test caught it, and still guards it.
+
+> Market conditions are a **seeding** operation applied to a fresh database,
+> not a live switch. The snapshot log is append-only, so writing crafted history
+> over a live series would contaminate the statistics and cost these scenarios
+> the determinism that is their entire point.
 
 ### One definition of "needs attention"
 
@@ -486,6 +557,8 @@ so the sharding boundary is a user.
 | `DELETE` | `/api/alerts/:id` | Remove an alert |
 | `GET` | `/api/alerts/events` | The notification list: what fired and why |
 | `POST` | `/api/alerts/evaluate` | Force an evaluation (demo affordance) |
+| `GET` | `/api/alerts/diagnostics` | Why each alert did or did not fire |
+| `GET` | `/api/demo/scenarios` | The named scenario catalogue |
 | `GET` | `/api/meta` | Source, config, engine parameters, pipeline health |
 | `GET` | `/api/sectors` | The static sector map |
 | `GET` | `/api/symbols` | Suggestion list |
@@ -534,6 +607,8 @@ backend/src/
   chart.js            the chart series: two ranges, high/low, marker
   intraday.js         session analysis - its own window, never borrowed
   alerts.js           definitions, the crossing state machine, events
+  alert-rules.js      one definition of each rule, shared by both below
+  alert-diagnostics.js  why an alert did or did not fire
   api.js              HTTP surface
   engine/
     numeric.js        every arithmetic hazard, in one place
@@ -580,7 +655,7 @@ Everything lives in [config.js](backend/src/config.js); nothing else reads
 ## Tests
 
 ```bash
-npm test    # 151 tests
+npm test    # 189 tests
 ```
 
 No network, no filesystem, no uncontrolled clock — in-memory SQLite, stub

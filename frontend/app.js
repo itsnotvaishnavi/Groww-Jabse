@@ -33,7 +33,8 @@ const el = {
   away: document.getElementById('away'),
   awayHeadline: document.getElementById('away-headline'),
   awaySignals: document.getElementById('away-signals'),
-  awaySimulate: document.getElementById('away-simulate'),
+  awayScenarios: document.getElementById('away-scenarios'),
+  scenarioList: document.getElementById('scenario-list'),
   sourceBody: document.getElementById('source-body'),
   logBody: document.getElementById('log-body'),
   alertFeed: document.getElementById('alert-feed'),
@@ -847,6 +848,40 @@ let simulatedAwayMs = null;
  */
 let awayRecorded = false;
 
+/**
+ * The named time-away scenarios, from /api/demo/scenarios.
+ *
+ * These are an override on the reported absence, so they apply instantly and
+ * change nothing about the data - which is why they can be one click. Market
+ * conditions need crafted observations in an append-only log, so they are a
+ * seeding step and appear in the Scenarios card with their command.
+ */
+let timeAwayOptions = [];
+
+function renderAwayScenarios() {
+  const buttons = [
+    ...timeAwayOptions.map((option) => ({ id: option.id, label: option.label, ms: option.ms })),
+    { id: 'off', label: 'Real time', ms: null },
+  ];
+
+  el.awayScenarios.innerHTML = buttons
+    .map(
+      (b) =>
+        `<button type="button" class="chip chip--ghost ${
+          (b.ms ?? null) === simulatedAwayMs ? 'is-active' : ''
+        }" data-away="${b.ms ?? ''}">${escapeHtml(b.label)}</button>`,
+    )
+    .join('');
+
+  for (const button of el.awayScenarios.querySelectorAll('[data-away]')) {
+    button.addEventListener('click', async () => {
+      const raw = button.dataset.away;
+      simulatedAwayMs = raw === '' ? null : Number(raw);
+      await refresh();
+    });
+  }
+}
+
 function renderAway(summary) {
   if (!summary) {
     el.away.hidden = true;
@@ -855,9 +890,7 @@ function renderAway(summary) {
 
   el.away.hidden = false;
   el.awayHeadline.textContent = summary.headline;
-
-  el.awaySimulate.textContent = simulatedAwayMs ? 'Back to real time' : 'Simulate 50h away';
-  el.awaySimulate.classList.toggle('is-active', Boolean(simulatedAwayMs));
+  renderAwayScenarios();
 
   /**
    * On a long absence the aggregate replaces the enumeration - after two days
@@ -1003,14 +1036,35 @@ el.refreshNow.addEventListener('click', async () => {
 });
 
 /**
- * The long-absence view cannot otherwise be shown without waiting two days,
- * and a reviewer should not have to take it on trust. It changes only the
- * reported duration and the aggregation threshold - never a score.
+ * Load the scenario catalogue once. The time-away options drive the chips in
+ * the absence banner; the market conditions are listed with the command that
+ * seeds each, because writing crafted history over a live append-only series
+ * would contaminate the statistics and cost them their determinism.
  */
-el.awaySimulate.addEventListener('click', async () => {
-  simulatedAwayMs = simulatedAwayMs ? null : 50 * 3_600_000;
-  await refresh();
-});
+async function loadScenarios() {
+  try {
+    const catalogue = await api('/demo/scenarios');
+    timeAwayOptions = catalogue.timeAway;
+    renderAwayScenarios();
+
+    el.scenarioList.innerHTML = `
+      <ul class="sc__list">
+        ${catalogue.conditions
+          .map(
+            (c) => `<li>
+              <span class="sc__label">${escapeHtml(c.label)}</span>
+              <span class="sc__desc">${escapeHtml(c.description)}</span>
+              <span class="sc__expect">${escapeHtml(c.expect)}</span>
+              <code class="sc__cmd">${escapeHtml(c.command)}</code>
+            </li>`,
+          )
+          .join('')}
+      </ul>
+      <p class="card__note">${escapeHtml(catalogue.note)}</p>`;
+  } catch {
+    // The catalogue is a demo aid; a failure here must not break the page.
+  }
+}
 
 // Ctrl/Cmd+K focuses search, matching the hint rendered in the nav bar.
 document.addEventListener('keydown', (event) => {
@@ -1022,5 +1076,6 @@ document.addEventListener('keydown', (event) => {
 });
 
 await loadFeatured();
+await loadScenarios();
 await refresh();
 setInterval(refresh, POLL_INTERVAL_MS);

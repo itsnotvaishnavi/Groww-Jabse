@@ -7,10 +7,12 @@
  * a network.
  */
 import express from 'express';
+import { diagnoseAlert } from './alert-diagnostics.js';
 import { AlertType } from './alerts.js';
 import { ChartRange, buildChart } from './chart.js';
 import { config } from './config.js';
 import { buildIntraday } from './intraday.js';
+import { scenarioCatalogue } from './demo/scenarios.js';
 import { computeDelta } from './delta.js';
 import { assessFreshness, detectConflict, isMarketOpen, lastMarketClose, nextMarketOpen } from './freshness.js';
 import { ValidationError, normalizeSymbol } from './watchlist.js';
@@ -113,6 +115,20 @@ export function createApi({
         : null,
       surfaced: surfacedStore ? surfacedStore.count(config.devUserId) : null,
     });
+  });
+
+  /**
+   * The demo scenario catalogue.
+   *
+   * Time-away scenarios are an override and switch instantly, so the UI offers
+   * them as one click. Market conditions need real observations written to the
+   * log, and the log is append-only - so they are a seeding operation applied to
+   * a fresh database by the CLI, and the catalogue carries the command. Writing
+   * crafted history on top of a live series would contaminate the statistics and
+   * cost these scenarios the determinism that is their whole point.
+   */
+  router.get('/demo/scenarios', (_req, res) => {
+    res.json(scenarioCatalogue());
   });
 
   /** The static sector map, so the UI can explain why a peer group is what it is. */
@@ -413,6 +429,37 @@ export function createApi({
   });
 
   /**
+   * "Why wasn't I alerted?" - one diagnosis per alert, computed from the engine.
+   *
+   * Never a generic message: the rule, the current value against it, the
+   * specific blockers, and the real feature facts behind them. Deterministic,
+   * because it reads the same condition functions the evaluator fires from.
+   */
+  router.get('/alerts/diagnostics', (_req, res) => {
+    if (!alertStore || !engine) {
+      return res.status(503).json({ error: 'alerts are disabled' });
+    }
+
+    const now = Date.now();
+    const evaluation = engine.evaluate({ userId: config.devUserId, now });
+    const bySymbol = new Map(evaluation.items.map((item) => [item.symbol, item]));
+    const engineParams = engine.params();
+
+    const diagnostics = alertStore
+      .list(config.devUserId)
+      .map((alert) =>
+        diagnoseAlert({
+          alert,
+          item: bySymbol.get(alert.symbol) ?? null,
+          alertParams: config.alerts,
+          engineParams,
+        }),
+      );
+
+    return res.json({ generatedAt: now, diagnostics });
+  });
+
+  /**
    * Force an evaluation now. Alerts are normally evaluated on every ingestion
    * tick - the moment a crossing can have happened - so this exists for the
    * demo and for tests rather than as the primary path.
@@ -426,6 +473,7 @@ export function createApi({
         userId: config.devUserId,
         evaluation: engine.evaluate({ userId: config.devUserId, now }),
         now,
+        engineParams: engine.params(),
       }),
     );
   });

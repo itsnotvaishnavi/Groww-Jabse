@@ -56,6 +56,8 @@ const ingestor = config.ingestEnabled
           userId: config.devUserId,
           evaluation: engine.evaluate({ userId: config.devUserId, now }),
           now,
+          // So the firing explanation is recorded with the event.
+          engineParams: engine.params(),
         });
         for (const alert of result.fired) {
           console.log(`[alert] ${alert.reason}`);

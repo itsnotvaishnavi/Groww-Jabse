@@ -96,9 +96,13 @@
         <section class="away" id="away" hidden>
           <div class="away__head">
             <p class="away__headline" id="away-headline"></p>
-            <button type="button" class="chip chip--ghost" id="away-simulate">
-              Simulate 50h away
-            </button>
+            <!--
+              Named time-away scenarios. These are an override, so they switch
+              instantly; market conditions need real observations written to an
+              append-only log and are therefore a seeding step (see the
+              Scenarios card).
+            -->
+            <div class="away__scenarios" id="away-scenarios" aria-label="Simulate time away"></div>
           </div>
           <div class="away__signals" id="away-signals"></div>
         </section>
@@ -166,6 +170,12 @@
         <div class="card" id="log-card">
           <h2 class="card__title">Snapshot log</h2>
           <div class="card__body" id="log-body"></div>
+        </div>
+
+        <!-- The reproducible demo scenarios, and how to run each one. -->
+        <div class="card" id="scenario-card">
+          <h2 class="card__title">Demo scenarios</h2>
+          <div class="card__body" id="scenario-list"></div>
         </div>
 
         <!-- Fired alerts. Minimal by intent: what triggered, and how long ago. -->

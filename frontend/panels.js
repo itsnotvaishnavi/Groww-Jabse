@@ -216,11 +216,70 @@ export function createPanels(deps) {
         }`;
   }
 
+  const STATUS_LABEL = {
+    would_fire: 'would fire now',
+    not_met: 'not met yet',
+    awaiting_reset: 'waiting to reset',
+    blocked: 'not evaluated',
+  };
+
+  /**
+   * "Why wasn't I alerted?"
+   *
+   * Rendered straight from /api/alerts/diagnostics - the rule, the current
+   * value, the specific blockers and the feature facts behind them. Nothing is
+   * composed here: a generic sentence assembled in the browser would be exactly
+   * the thing this feature exists to replace.
+   */
+  function diagnosisMarkup(diagnosis) {
+    if (!diagnosis) return '';
+
+    const blockers = diagnosis.blockers.length
+      ? `<ul class="dg__blockers">${diagnosis.blockers
+          .map((b) => `<li><span class="dg__code">${escapeHtml(b.code)}</span> ${escapeHtml(b.text)}</li>`)
+          .join('')}</ul>`
+      : '<p class="dg__ok">Every condition is satisfied — the next evaluation fires it.</p>';
+
+    const facts = diagnosis.signals.length
+      ? `<ul class="dg__facts">${diagnosis.signals
+          .map(
+            (f) =>
+              `<li class="${f.available === false ? 'dg__fact--off' : ''}">${escapeHtml(f.text)}</li>`,
+          )
+          .join('')}</ul>`
+      : '';
+
+    return `<div class="dg dg--${escapeHtml(diagnosis.status)}">
+      <div class="dg__head">
+        <span class="dg__rule">${escapeHtml(diagnosis.rule.text)}</span>
+        <span class="dg__status">${escapeHtml(STATUS_LABEL[diagnosis.status] ?? diagnosis.status)}</span>
+      </div>
+      <div class="dg__now">now: <strong>${escapeHtml(diagnosis.current.text)}</strong>${
+        diagnosis.current.dataQuality
+          ? ` <em>${escapeHtml(diagnosis.current.dataQuality)}</em>`
+          : ''
+      }</div>
+      ${blockers}
+      ${facts}
+    </div>`;
+  }
+
   async function loadAlerts(container, symbol, onChange) {
     try {
-      const { alerts } = await api('/alerts');
+      const [{ alerts }, diagnostics] = await Promise.all([
+        api('/alerts'),
+        api('/alerts/diagnostics').catch(() => ({ diagnostics: [] })),
+      ]);
       const mine = alerts.filter((a) => a.symbol === symbol);
-      container.innerHTML = alertFormMarkup(symbol, mine);
+      const byId = new Map((diagnostics.diagnostics ?? []).map((d) => [d.alertId, d]));
+
+      container.innerHTML =
+        alertFormMarkup(symbol, mine) +
+        (mine.length
+          ? `<div class="dg__list">${mine
+              .map((a) => diagnosisMarkup(byId.get(a.id)))
+              .join('')}</div>`
+          : '');
     } catch (error) {
       container.innerHTML = `<p class="ip__note">Could not load alerts: ${escapeHtml(
         error.message,
@@ -286,6 +345,18 @@ export function createPanels(deps) {
               <span class="al__feed-meta">${ago(Date.now() - e.firedAt)} · ${escapeHtml(
                 e.dataQuality ?? '',
               )}</span>
+              ${
+                /**
+                 * Which signals contributed, as recorded AT fire time. The
+                 * market has moved since; recomputing this now would describe a
+                 * different moment than the one that triggered.
+                 */
+                e.diagnosis?.contributing?.length
+                  ? `<span class="al__feed-why">via ${e.diagnosis.contributing
+                      .map((c) => escapeHtml(c.signal.replace(/([A-Z])/g, ' $1').toLowerCase().trim()))
+                      .join(', ')}</span>`
+                  : ''
+              }
             </li>`,
           )
           .join('')}

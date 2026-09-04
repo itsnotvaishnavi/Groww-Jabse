@@ -176,7 +176,37 @@ export function createDatabase(dbPath = config.dbPath) {
   db.pragma('foreign_keys = ON');
 
   db.exec(SCHEMA);
+  addColumns(db);
   return db;
+}
+
+/**
+ * Columns added after a table first shipped.
+ *
+ * CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, so a
+ * database created by an earlier version keeps its old shape. These are applied
+ * idempotently by checking the live column list first - which is the whole
+ * migration story this project needs, since the observation log is regenerable
+ * and everything else is small.
+ */
+function addColumns(db) {
+  const additions = [
+    {
+      table: 'alert_events',
+      column: 'diagnosis',
+      // Why the alert fired, captured AT fire time. Recomputing it later would
+      // describe whatever the market is doing now rather than the moment that
+      // actually triggered.
+      ddl: 'ALTER TABLE alert_events ADD COLUMN diagnosis TEXT',
+    },
+  ];
+
+  for (const { table, column, ddl } of additions) {
+    const existing = db.prepare(`SELECT name FROM pragma_table_info(?)`).all(table);
+    if (existing.length === 0) continue;
+    if (existing.some((row) => row.name === column)) continue;
+    db.exec(ddl);
+  }
 }
 
 let instance;
