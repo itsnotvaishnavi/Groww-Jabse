@@ -1,0 +1,13 @@
+node_modules/
+*.log
+
+# SQLite database files - the snapshot log is regenerated, never committed
+data/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+.env
+.env.local
+.DS_Store
