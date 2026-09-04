@@ -4,9 +4,60 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Smart Watchlist</title>
+    <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <h1>Smart Watchlist</h1>
-    <p>Scaffold only. The watchlist UI lands once the snapshot log is in place.</p>
+    <header class="topbar">
+      <div class="topbar__title">
+        <h1>Smart Watchlist</h1>
+        <p class="subtitle">What has meaningfully changed since you last looked</p>
+      </div>
+
+      <!-- Source and market state are shown permanently rather than buried in a
+           settings panel: whether you are looking at a live exchange or a
+           deterministic simulation changes how you should read every number
+           below, so the app says so out loud. -->
+      <div class="topbar__status" id="status">
+        <span class="pill pill--muted" id="source-pill">connecting…</span>
+        <span class="pill pill--muted" id="market-pill"></span>
+        <span class="refresh" id="refresh-note"></span>
+      </div>
+    </header>
+
+    <main>
+      <form class="add-form" id="add-form" autocomplete="off">
+        <input
+          id="symbol-input"
+          name="symbol"
+          list="symbol-suggestions"
+          placeholder="Add a symbol (e.g. RELIANCE)"
+          maxlength="18"
+          aria-label="Add a symbol to your watchlist"
+        />
+        <datalist id="symbol-suggestions"></datalist>
+        <button type="submit">Add</button>
+      </form>
+      <p class="form-error" id="form-error" role="alert" hidden></p>
+
+      <div class="toolbar">
+        <label for="sort-select">Sort</label>
+        <select id="sort-select">
+          <option value="added">Recently added</option>
+          <option value="change">Biggest change since you looked</option>
+          <option value="staleness">Least fresh first</option>
+        </select>
+        <button type="button" class="ghost" id="refresh-now">Refresh now</button>
+      </div>
+
+      <ul class="watchlist" id="watchlist"></ul>
+
+      <p class="empty" id="empty-state" hidden>
+        Your watchlist is empty. Add a symbol above to start tracking it.
+      </p>
+    </main>
+
+    <footer class="footer" id="footer"></footer>
+
+    <script src="app.js" type="module"></script>
   </body>
 </html>
