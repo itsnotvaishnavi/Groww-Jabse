@@ -1,17 +1,22 @@
-# Smart Market Watchlist
+# Jabse
+
+**जब से** — *jab se*, Hindi for "since when".
 
 A watchlist that answers **"what has meaningfully changed *since I last looked*"**
 rather than "what moved today".
 
-Groww "Code" hackathon submission — solo build, Sep 4–7 2026.
+Built for Groww "Code" — solo build, Sep 4–7 2026.
 
 ---
 
 ## The idea
 
-Every watchlist app shows the same thing: today's percentage change. But "today"
-is an arbitrary window that has nothing to do with you. If you last checked on
-Tuesday, a flat Friday tells you nothing about the 4% round trip you missed.
+The name is the whole thesis. Every watchlist app shows the same thing: today's
+percentage change. But "today" is an arbitrary window that has nothing to do
+with you. If you last checked on Tuesday, a flat Friday tells you nothing about
+the 4% round trip you missed.
+
+*Jab se* — since when? Since **you** last looked.
 
 So the unit here is not a day — it's **your** last visit. Every user has a
 `last_viewed_at` per symbol, and what changed is the diff between the snapshot

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Smart Watchlist</title>
+    <title>Jabse — what changed since you last looked</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -21,18 +21,43 @@
     -->
     <header class="nav">
       <div class="nav__brand">
+        <!-- Jabse's own mark: a delta, because the product is a difference. -->
         <span class="mark" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none">
             <path
-              d="M3 16.5 9 10l4 4 8-8.5"
+              d="M12 5.5 20 18.5H4z"
               stroke="#fff"
-              stroke-width="2.6"
+              stroke-width="2.2"
               stroke-linecap="round"
               stroke-linejoin="round"
             />
           </svg>
         </span>
-        <span class="nav__name">Smart Watchlist</span>
+
+        <span class="nav__titles">
+          <span class="nav__name">Jabse</span>
+          <!-- The name is the thesis: "jab se" is Hindi for "since when". -->
+          <span class="nav__tag">jab se — “since when”</span>
+        </span>
+
+        <span class="nav__divider" aria-hidden="true"></span>
+
+        <!--
+          Attribution for the hackathon this was built for, not a claim to be a
+          Groww product. The mark is loaded from assets/ so the official file
+          can be dropped in without touching this markup; alt is empty because
+          the word beside it already names it to a screen reader.
+        -->
+        <a
+          class="attrib"
+          href="https://github.com/itsnotvaishnavi/Groww-Jabse"
+          rel="noreferrer"
+        >
+          <span class="attrib__pre">built for</span>
+          <img class="groww-mark" src="assets/groww-mark.svg" alt="" width="20" height="20" />
+          <span class="groww-word">Groww</span>
+          <span class="attrib__evt">Code</span>
+        </a>
       </div>
 
       <form class="nav__search" id="add-form" autocomplete="off" role="search">

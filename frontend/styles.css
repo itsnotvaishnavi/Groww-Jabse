@@ -88,25 +88,101 @@ select {
   flex: none;
 }
 
-/* A generic mark, not a reproduction of anyone's logo. */
+/*
+ * Jabse's own mark. A rounded square in flat brand green, deliberately unlike
+ * the circular gradient of the Groww mark sitting a few pixels away - the two
+ * must never be mistaken for each other.
+ */
 .mark {
   width: 30px;
   height: 30px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--green-bright), #2ab4d4);
+  border-radius: 9px;
+  background: var(--green);
   display: grid;
   place-items: center;
+  flex: none;
 }
 
 .mark svg {
-  width: 17px;
-  height: 17px;
+  width: 18px;
+  height: 18px;
+}
+
+.nav__titles {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
 }
 
 .nav__name {
   font-size: 16.5px;
   font-weight: 700;
   letter-spacing: -0.02em;
+}
+
+/* The etymology is the product pitch in three words, so it earns nav space. */
+.nav__tag {
+  font-size: 11px;
+  color: var(--text-faint);
+  letter-spacing: 0.005em;
+  white-space: nowrap;
+}
+
+.nav__divider {
+  width: 1px;
+  height: 26px;
+  background: var(--border);
+  margin-inline: 4px;
+  flex: none;
+}
+
+/* ---- hackathon attribution, not a product claim ---- */
+
+.attrib {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  padding: 4px 8px;
+  border-radius: 20px;
+  transition: background 0.12s;
+}
+
+.attrib:hover {
+  background: var(--bg-alt);
+}
+
+.attrib__pre {
+  color: var(--text-faint);
+}
+
+.groww-mark {
+  width: 20px;
+  height: 20px;
+  display: block;
+  flex: none;
+}
+
+/* Their wordmark set in their own typeface and green - which is why no image
+   is needed for the text half of the lockup. */
+.groww-word {
+  font-size: 14.5px;
+  font-weight: 700;
+  color: var(--green);
+  letter-spacing: -0.02em;
+}
+
+.attrib__evt {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--green);
+  background: var(--green-tint);
+  border-radius: 4px;
+  padding: 2px 5px;
+  letter-spacing: 0.02em;
 }
 
 .nav__search {
@@ -785,6 +861,22 @@ select:focus-visible {
     position: static;
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  }
+}
+
+/* The nav is the first thing to run out of room; shed the optional half of the
+   brand block before the search bar or the status pill get squeezed. */
+@media (max-width: 1080px) {
+  .nav__tag,
+  .attrib__pre {
+    display: none;
+  }
+}
+
+@media (max-width: 880px) {
+  .nav__divider,
+  .attrib__evt {
+    display: none;
   }
 }
 

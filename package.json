@@ -1,8 +1,8 @@
 {
-  "name": "groww-code-watchlist",
+  "name": "jabse",
   "version": "0.1.0",
   "private": true,
-  "description": "Smart market watchlist - surfaces what has meaningfully changed for a user since they last looked.",
+  "description": "Jabse (\"jab se\" - since when): a watchlist that surfaces what has meaningfully changed for a user since they last looked.",
   "type": "module",
   "engines": {
     "node": ">=22"
