@@ -380,6 +380,31 @@ test('an absent observation is data, not an error', async () => {
   assert.equal(log.stats().snapshots, 0, 'and no price was invented to fill it');
 });
 
+test('backfill can target one symbol, so a late addition is not a dead row', async () => {
+  const { log, watchlist } = fresh();
+  watchlist.add('test-user', 'EXISTING');
+  watchlist.add('test-user', 'JUSTADDED');
+
+  const ingestor = createIngestor({
+    source: stubSource(),
+    snapshotLog: log,
+    watchlist,
+    intervalMs: 15_000,
+  });
+
+  /**
+   * A symbol added after boot missed the boot backfill. Without a targeted
+   * backfill it sits at "not enough observations yet" until enough live ticks
+   * accumulate - which at a 15-second cadence and a 20-bar minimum is most of
+   * an hour. The API calls this on add.
+   */
+  const result = await ingestor.backfill({ symbols: ['JUSTADDED'], hours: 1, now: T0 });
+
+  assert.ok(result.written > 0, 'the late addition got a past');
+  assert.ok(log.asOf('JUSTADDED', T0 - 30 * 60_000), 'queryable half an hour back');
+  assert.equal(log.latest('EXISTING'), null, 'and only that symbol was fetched');
+});
+
 test('backfill gives a fresh install a past to diff against', async () => {
   const { log, watchlist } = fresh();
   watchlist.add('test-user', 'RELIANCE');

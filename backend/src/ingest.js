@@ -118,7 +118,17 @@ export function createIngestor({ source, snapshotLog, watchlist, intervalMs }) {
    * Points are spread evenly across the window and capped, so a large
    * backfillHours widens coverage instead of lengthening boot.
    */
-  async function backfill({ hours = config.backfillHours, now = Date.now() } = {}) {
+  async function backfill({
+    hours = config.backfillHours,
+    now = Date.now(),
+    /**
+     * Which symbols to reconstruct. Defaults to everything being polled, which
+     * is the boot case; the API passes a single symbol when one is added, so a
+     * symbol added at 3pm is immediately as useful as one present at startup
+     * rather than being a dead row until enough live ticks accumulate.
+     */
+    symbols = symbolsToPoll(),
+  } = {}) {
     if (hours <= 0) return { points: 0, written: 0 };
 
     const spanMs = hours * 60 * 60 * 1000;
@@ -129,7 +139,7 @@ export function createIngestor({ source, snapshotLog, watchlist, intervalMs }) {
     let written = 0;
     let requested = 0;
 
-    for (const symbol of symbolsToPoll()) {
+    for (const symbol of symbols) {
       const batch = [];
 
       for (let i = points; i >= 1; i -= 1) {

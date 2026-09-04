@@ -228,13 +228,27 @@ export function createApi({
    * Add a symbol. Responds 201 for a new entry and 200 for one already there,
    * so a client can tell the difference without either case being an error.
    *
-   * The first poll is kicked off in the background rather than awaited: the
-   * user should not wait on a third-party API to see their symbol appear, and
-   * the row renders correctly as "No data yet" until the tick lands.
+   * A new symbol gets its recent history reconstructed, not just its first live
+   * poll. Without that it would sit at "not enough observations yet" for the
+   * best part of an hour while enough bars accumulated - a dead row, for the
+   * same reason a fresh clone would have had a dead watchlist before the boot
+   * backfill existed. Asking the source about the recent past is precisely why
+   * getSnapshotAt is on the DataSource interface.
+   *
+   * Kicked off in the background rather than awaited: the user should not wait
+   * on a third-party API to see their symbol appear, and the row renders
+   * honestly as "not enough observations yet" until the history lands.
    */
   router.post('/watchlist', (req, res) => {
     const result = watchlist.add(config.devUserId, req.body?.symbol ?? '');
-    if (result.added && ingestor) void ingestor.tick();
+
+    if (result.added && ingestor) {
+      void ingestor
+        .backfill({ symbols: [result.symbol] })
+        .then(() => ingestor.tick())
+        .catch((error) => console.error(`[api] backfill for ${result.symbol} failed:`, error.message));
+    }
+
     res.status(result.added ? 201 : 200).json(result);
   });
 
