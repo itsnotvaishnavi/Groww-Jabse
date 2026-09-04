@@ -136,12 +136,65 @@ export const FreshnessState = {
 };
 
 /**
+ * Sources whose observations are a deliberately frozen point in time.
+ *
+ * A demo scenario seeds history up to a chosen instant and then stops - that
+ * is the whole point of it, because the guarantees each scenario makes are
+ * anchored to the end of its own series. So the age of its newest observation
+ * grows with wall-clock time and the assessment above correctly concludes
+ * STALE: nothing newer exists, and by the cadence of the configured source
+ * something should.
+ *
+ * The state is right. "Stale - feed may be down" is not: the feed is not down,
+ * time was moved on purpose, and telling a reviewer the app is broken in the
+ * panel they will read longest is the worst possible place to be imprecise.
+ *
+ * The writers import these names rather than spelling them out, so the string
+ * that lands in the database is the same one this module recognises.
+ */
+export const FrozenSource = {
+  SCENARIO: 'scenario',
+  FIXTURE: 'demo-fixture',
+};
+
+const FROZEN_SOURCES = new Set(Object.values(FrozenSource));
+
+/** HH:MM in IST, from the same exact fixed-offset arithmetic as the calendar. */
+function istClock(timestamp) {
+  const { minuteOfDay } = istParts(timestamp);
+  const hours = Math.floor(minuteOfDay / 60);
+  const minutes = minuteOfDay % 60;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+/**
  * Assess the newest observation for a symbol.
  *
  * @param snapshot  newest row from the log, or null
  * @param sourceInfo the active source's describe() output
  */
 export function assessFreshness(snapshot, sourceInfo, now = Date.now()) {
+  const assessment = assess(snapshot, sourceInfo, now);
+
+  /**
+   * Only the label is rewritten, and only for a frozen source that has gone
+   * stale. The state, isStale, ageMs and expectedMaxAgeMs are all left exactly
+   * as computed - so confidence is still reduced, alerts still refuse to
+   * evaluate, and the row still carries its caveats. Suppressing any of that
+   * would be a lie of a different kind: the data really is old.
+   */
+  if (!assessment.isStale || !snapshot || !FROZEN_SOURCES.has(snapshot.source)) {
+    return assessment;
+  }
+
+  return {
+    ...assessment,
+    label: `Scenario snapshot · ${istClock(snapshot.timestamp)} IST`,
+    frozen: true,
+  };
+}
+
+function assess(snapshot, sourceInfo, now) {
   const tolerance = config.ingestIntervalMs * config.stalenessIntervals;
 
   if (!snapshot) {

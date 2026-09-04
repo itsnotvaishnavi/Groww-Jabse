@@ -41,6 +41,7 @@
  * real conflict actually takes.
  */
 import { channel, fnv1a, hashUnit } from '../sources/noise.js';
+import { FrozenSource } from '../freshness.js';
 
 export const DEMO_SEED = 'jabse-demo-2026';
 
@@ -213,7 +214,8 @@ export function applyDemoFixture({ snapshotLog, watchlist, userId, now }) {
     });
 
     for (let i = 0; i <= BARS; i += 1) {
-      push(spec.symbol, i, priceAt(i), spec.volume === 0 ? 0 : volumeAt(i), 'demo-fixture', 1);
+      const vol = spec.volume === 0 ? 0 : volumeAt(i);
+      push(spec.symbol, i, priceAt(i), vol, FrozenSource.FIXTURE, 1);
     }
   }
 
@@ -221,7 +223,7 @@ export function applyDemoFixture({ snapshotLog, watchlist, userId, now }) {
   // market-relative signal has something to say.
   const benchmarkPrice = path({ symbol: 'NIFTY', base: 24_200, amplitude: 0.0006 });
   for (let i = 0; i <= BARS; i += 1) {
-    push('NIFTY', i, benchmarkPrice(i), 0, 'demo-fixture', 1);
+    push('NIFTY', i, benchmarkPrice(i), 0, FrozenSource.FIXTURE, 1);
   }
 
   /**
@@ -231,7 +233,7 @@ export function applyDemoFixture({ snapshotLog, watchlist, userId, now }) {
    */
   const maruti = path({ symbol: 'MARUTI', base: 12_400, amplitude: 0.002 });
   for (let i = BARS - 3; i <= BARS; i += 1) {
-    push('MARUTI', i, maruti(i), 4_200, 'demo-fixture', 1);
+    push('MARUTI', i, maruti(i), 4_200, FrozenSource.FIXTURE, 1);
   }
 
   /**

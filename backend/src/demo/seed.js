@@ -11,6 +11,7 @@ import { config, REPO_ROOT } from '../config.js';
 import { createDatabase } from '../db.js';
 import { createEngine } from '../engine/index.js';
 import { createSurfacedStore } from '../engine/surfaced.js';
+import { FrozenSource } from '../freshness.js';
 import { createSnapshotLog } from '../snapshot-log.js';
 import { createSummaryService } from '../summary.js';
 import { createWatchlist } from '../watchlist.js';
@@ -80,9 +81,9 @@ const applied = conditionArg
  * reflects only the age of the observations - which the fixture controls.
  */
 const fixtureSource = {
-  name: 'demo-fixture',
+  name: FrozenSource.FIXTURE,
   describe: () => ({
-    name: 'demo-fixture',
+    name: FrozenSource.FIXTURE,
     kind: 'synthetic',
     alwaysOpen: true,
     delayMs: 0,

@@ -27,6 +27,7 @@
  */
 import { channel, fnv1a, hashUnit } from '../sources/noise.js';
 import { BENCHMARK_SYMBOL } from '../symbols.js';
+import { FrozenSource } from '../freshness.js';
 
 const MIN = 60_000;
 
@@ -302,11 +303,11 @@ export function applyScenario({
     const denseFrom = endAt - BARS * BAR_MS;
     for (let t = endAt - TAIL_SPAN_MS; t < denseFrom; t += TAIL_SPACING_MS) {
       const i = Math.round((t - endAt) / BAR_MS) + BARS;
-      push(symbol, t, price(i), volume(i), 'scenario', 1);
+      push(symbol, t, price(i), volume(i), FrozenSource.SCENARIO, 1);
     }
 
     for (let i = 0; i <= BARS; i += 1) {
-      push(symbol, endAt - (BARS - i) * BAR_MS, price(i), volume(i), 'scenario', 1);
+      push(symbol, endAt - (BARS - i) * BAR_MS, price(i), volume(i), FrozenSource.SCENARIO, 1);
     }
   }
 
@@ -328,10 +329,10 @@ export function applyScenario({
   const benchmarkDenseFrom = endAt - BARS * BAR_MS;
   for (let t = endAt - TAIL_SPAN_MS; t < benchmarkDenseFrom; t += TAIL_SPACING_MS) {
     const i = Math.round((t - endAt) / BAR_MS) + BARS;
-    push(BENCHMARK_SYMBOL, t, benchmark(i), 0, 'scenario', 1);
+    push(BENCHMARK_SYMBOL, t, benchmark(i), 0, FrozenSource.SCENARIO, 1);
   }
   for (let i = 0; i <= BARS; i += 1) {
-    push(BENCHMARK_SYMBOL, endAt - (BARS - i) * BAR_MS, benchmark(i), 0, 'scenario', 1);
+    push(BENCHMARK_SYMBOL, endAt - (BARS - i) * BAR_MS, benchmark(i), 0, FrozenSource.SCENARIO, 1);
   }
 
   snapshotLog.appendMany(rows);

@@ -1,6 +1,6 @@
 # Jabse
 
-**जब से** — *jab se*, Hindi for "since when".
+**जब से** — *jab se*, Hindi for "since".
 
 A watchlist that answers **"what has meaningfully changed *since I last looked*"**
 rather than "what moved today".
@@ -46,8 +46,8 @@ rule. Most can't, because the explanation is written by hand and drifts from the
 code that decides.
 
 So: **defining "meaningful", making it testable, and making it explainable** is
-what this project is. The name is the thesis — *jab se*, since when? Since
-**you** last looked.
+what this project is. The name is the thesis — *jab se*, since. Since when?
+Since **you** last looked.
 
 ---
 
@@ -248,6 +248,17 @@ seconds, is genuinely broken. Five states carry the distinction: `live`,
 `delayed`, `market_closed`, `stale`, `no_data` — and data predating the last
 *open* session is still `stale`, because the feed broke while the market was
 trading.
+
+A demo scenario is the one case where the state is right and the *wording* was
+not. A scenario seeds history up to a chosen instant and stops — its guarantees
+are anchored to the end of its own series — so its newest observation ages and
+the assessment correctly reaches `stale`. But "Stale — feed may be down" is
+false: the feed is not down, time was moved on purpose, and telling a reviewer
+the app is broken is the worst thing to be imprecise about. A frozen source is
+therefore relabelled `Scenario snapshot · 19:41 IST`, and **only** the label
+changes: the state, the age, the halved confidence and the alerts' refusal to
+evaluate all stand, because the data really is old. That is what makes the
+`data_delay` scenario still able to demonstrate what stale data does.
 
 ### `last_viewed_at` semantics
 

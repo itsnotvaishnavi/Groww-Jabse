@@ -22,9 +22,8 @@ const { createSnapshotLog } = await import('../src/snapshot-log.js');
 const { createWatchlist, normalizeSymbol, ValidationError } = await import('../src/watchlist.js');
 const { computeDelta, NoBaselineReason } = await import('../src/delta.js');
 const { changeSinceViewed } = await import('../src/engine/features.js');
-const { assessFreshness, detectConflict, isMarketOpen, FreshnessState } = await import(
-  '../src/freshness.js'
-);
+const { assessFreshness, detectConflict, isMarketOpen, FreshnessState, FrozenSource } =
+  await import('../src/freshness.js');
 const { createApi } = await import('../src/api.js');
 const { createIngestor } = await import('../src/ingest.js');
 
@@ -292,6 +291,49 @@ test('an always-open source is judged only on our polling cadence', () => {
   const stale = assessFreshness(snap({ timestamp: now - TOLERANCE_MS - 1 }), SYNTHETIC, now);
   assert.equal(stale.state, FreshnessState.STALE);
   assert.equal(stale.isStale, true);
+});
+
+/**
+ * A frozen demo scenario is old on purpose, and must not be described as a
+ * fault. It reads STALE and keeps every consequence of being stale - reduced
+ * confidence, alerts refusing to evaluate - because the data really is old.
+ * Only the wording changes, because "feed may be down" is the one thing that
+ * is not true, and it is the line a reviewer reads longest.
+ */
+test('a frozen scenario is labelled as one, never as a broken feed', () => {
+  const now = T0 + 10 * 60_000;
+  const frozenAt = now - TOLERANCE_MS - 60_000;
+
+  for (const source of [FrozenSource.SCENARIO, FrozenSource.FIXTURE]) {
+    const frozen = assessFreshness(snap({ timestamp: frozenAt, source }), SYNTHETIC, now);
+
+    assert.doesNotMatch(
+      frozen.label,
+      /feed may be down|feed has not updated|no data from the last open session/,
+      `${source}: labelled as a fault`,
+    );
+    assert.match(frozen.label, /^Scenario snapshot · \d{2}:\d{2} IST$/, `${source}: label shape`);
+    assert.equal(frozen.frozen, true);
+
+    // The state and everything derived from it are untouched.
+    assert.equal(frozen.state, FreshnessState.STALE, `${source}: state must still be stale`);
+    assert.equal(frozen.isStale, true, `${source}: isStale must still be true`);
+    assert.equal(frozen.ageMs, now - frozenAt, `${source}: age must still be reported`);
+  }
+
+  // A live scenario row is not relabelled: there is nothing to explain.
+  const current = assessFreshness(
+    snap({ timestamp: now - 5_000, source: FrozenSource.SCENARIO }),
+    SYNTHETIC,
+    now,
+  );
+  assert.equal(current.state, FreshnessState.LIVE);
+  assert.equal(current.label, 'Live');
+  assert.equal(current.frozen, undefined);
+
+  // And a real source going stale still says so in the strongest terms.
+  const broken = assessFreshness(snap({ timestamp: frozenAt, source: 'simulator' }), SYNTHETIC, now);
+  assert.match(broken.label, /feed may be down/, 'a genuinely broken feed must keep its warning');
 });
 
 test('a delayed source is not stale merely for being delayed', () => {

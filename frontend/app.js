@@ -171,9 +171,15 @@ async function api(path, options) {
  * The freshness pill: state plus the age of the observation. The age shows even
  * in the good cases, because "live" without a number is a claim the user has to
  * take on faith.
+ *
+ * A frozen scenario is the one exception: its label already names the instant
+ * it was frozen at, so appending the age repeats it in different units - and
+ * the same age is printed directly above, under the price. Three ways of saying
+ * "26m ago" in one cell wrapped the pill onto four lines and read as clutter.
  */
 function freshnessPill(freshness) {
-  const age = freshness.ageMs == null ? '' : ` · ${ago(freshness.ageMs)}`;
+  const age =
+    freshness.ageMs == null || freshness.frozen ? '' : ` · ${ago(freshness.ageMs)}`;
   return `<span class="pill pill--${freshness.state}" title="${escapeHtml(freshness.label)}">${escapeHtml(
     freshness.label,
   )}${age}</span>`;
