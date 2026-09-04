@@ -1,28 +1,51 @@
 /**
  * HTTP entrypoint.
  *
- * Deliberately thin: it wires routes and serves the static frontend. All real
- * logic lives in modules so it can be tested (and reasoned about) without
- * standing up a server.
+ * Deliberately thin: it wires modules together, serves the static frontend,
+ * and owns process lifecycle. All real logic lives in modules so it can be
+ * tested (and reasoned about) without standing up a server.
  */
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import express from 'express';
+import { REPO_ROOT, config } from './config.js';
+import { createApi } from './api.js';
+import { closeDb, getDb } from './db.js';
+import { assessFreshness } from './freshness.js';
+import { createIngestor } from './ingest.js';
+import { createSnapshotLog } from './snapshot-log.js';
+import { createWatchlist } from './watchlist.js';
+import { getSource } from './sources/index.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = path.resolve(__dirname, '..', '..');
-
-const PORT = Number(process.env.PORT ?? 3000);
 const STARTED_AT = Date.now();
+
+const db = getDb();
+const snapshotLog = createSnapshotLog(db);
+const watchlist = createWatchlist(db);
+const source = getSource();
+const sourceInfo = source.describe();
+
+// A first-run watchlist, so the page has something on it before the user has
+// typed anything. Existing watchlists are left alone.
+const seeded = watchlist.ensureDefaults(config.devUserId, config.defaultSymbols);
+if (seeded.length > 0) {
+  console.log(`[boot] seeded watchlist with ${seeded.join(', ')}`);
+}
+
+const ingestor = config.ingestEnabled
+  ? createIngestor({
+      source,
+      snapshotLog,
+      watchlist,
+      intervalMs: config.ingestIntervalMs,
+    })
+  : null;
 
 const app = express();
 app.use(express.json());
 
 /**
  * Liveness probe. Intentionally does NOT touch the database or any upstream
- * data source - it answers "is this process up?", nothing more. A readiness
- * check that reports data freshness is a separate concern and will get its
- * own endpoint once the snapshot log exists.
+ * data source - it answers "is this process up?", nothing more.
  */
 app.get('/health', (_req, res) => {
   res.json({
@@ -32,10 +55,91 @@ app.get('/health', (_req, res) => {
   });
 });
 
+/**
+ * Readiness, which is a different question from liveness: the process can be
+ * perfectly healthy while the data behind it is hours old. This reports the
+ * freshness of every watched symbol and answers 503 when nothing is fresh, so
+ * "the server is up" can never be mistaken for "the data is good".
+ */
+app.get('/ready', (_req, res) => {
+  const now = Date.now();
+  const symbols = watchlist.symbolsInUse();
+  const latest = snapshotLog.latestForSymbols(symbols);
+
+  const byState = {};
+  for (const symbol of symbols) {
+    const { state } = assessFreshness(latest.get(symbol) ?? null, sourceInfo, now);
+    byState[state] = (byState[state] ?? 0) + 1;
+  }
+
+  const fresh = symbols.length - (byState.stale ?? 0) - (byState.no_data ?? 0);
+  const ready = symbols.length === 0 || fresh > 0;
+
+  res.status(ready ? 200 : 503).json({
+    ready,
+    source: source.name,
+    symbols: symbols.length,
+    fresh,
+    byState,
+  });
+});
+
+app.use('/api', createApi({ snapshotLog, watchlist, source, ingestor }));
+
 // The frontend is plain HTML/JS with no build step, so Express serves it
 // directly. One process, one origin, no CORS to reason about.
 app.use(express.static(path.join(REPO_ROOT, 'frontend')));
 
-app.listen(PORT, () => {
-  console.log(`[server] listening on http://localhost:${PORT}`);
+const server = app.listen(config.port, async () => {
+  console.log(`[server] listening on http://localhost:${config.port}`);
+  console.log(
+    `[server] source=${source.name} interval=${config.ingestIntervalMs}ms` +
+      (source.name === 'simulator' ? ` seed=${config.simSeed}` : ''),
+  );
+
+  if (!ingestor) {
+    console.log('[boot] ingestion disabled (INGEST_ENABLED=false)');
+    return;
+  }
+
+  /**
+   * Backfill before starting the loop, and after listen() rather than before:
+   * the page should be reachable while history is being reconstructed, and a
+   * failing upstream should delay data, never the server itself.
+   */
+  try {
+    const result = await ingestor.backfill();
+    console.log(
+      `[boot] backfilled ${result.written} snapshots from ${result.points} probes ` +
+        `over ${config.backfillHours}h`,
+    );
+  } catch (error) {
+    console.error('[boot] backfill failed, continuing with live ingestion only:', error.message);
+  }
+
+  ingestor.start();
 });
+
+/**
+ * Shut down in dependency order - stop producing writes, stop accepting
+ * requests, then close the database - so nothing is mid-transaction when the
+ * file handle goes away.
+ */
+let shuttingDown = false;
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[server] ${signal} received, shutting down`);
+
+  ingestor?.stop();
+  server.close(() => {
+    closeDb();
+    process.exit(0);
+  });
+
+  // Do not hang forever on a lingering keep-alive connection.
+  setTimeout(() => process.exit(0), 5_000).unref();
+}
+
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
