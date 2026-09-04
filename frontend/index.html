@@ -4,56 +4,132 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Smart Watchlist</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <header class="topbar">
-      <div class="topbar__title">
-        <h1>Smart Watchlist</h1>
-        <p class="subtitle">What has meaningfully changed since you last looked</p>
+    <!--
+      Every piece of chrome here does something real. There are no decorative
+      nav tabs and no placeholder panels: the search box adds symbols, the chips
+      filter, the ticker carries live prices, and the sidebar reports the actual
+      state of the data pipeline.
+    -->
+    <header class="nav">
+      <div class="nav__brand">
+        <span class="mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none">
+            <path
+              d="M3 16.5 9 10l4 4 8-8.5"
+              stroke="#fff"
+              stroke-width="2.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </span>
+        <span class="nav__name">Smart Watchlist</span>
       </div>
 
-      <!-- Source and market state are shown permanently rather than buried in a
-           settings panel: whether you are looking at a live exchange or a
-           deterministic simulation changes how you should read every number
-           below, so the app says so out loud. -->
-      <div class="topbar__status" id="status">
-        <span class="pill pill--muted" id="source-pill">connecting…</span>
-        <span class="pill pill--muted" id="market-pill"></span>
-        <span class="refresh" id="refresh-note"></span>
-      </div>
-    </header>
-
-    <main>
-      <form class="add-form" id="add-form" autocomplete="off">
+      <form class="nav__search" id="add-form" autocomplete="off" role="search">
+        <svg class="nav__search-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2" />
+          <path d="m16.5 16.5 4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+        </svg>
         <input
           id="symbol-input"
           name="symbol"
           list="symbol-suggestions"
-          placeholder="Add a symbol (e.g. RELIANCE)"
+          placeholder="Search or add a symbol…"
           maxlength="18"
-          aria-label="Add a symbol to your watchlist"
+          aria-label="Search or add a symbol to your watchlist"
         />
         <datalist id="symbol-suggestions"></datalist>
-        <button type="submit">Add</button>
+        <kbd>Ctrl K</kbd>
       </form>
-      <p class="form-error" id="form-error" role="alert" hidden></p>
 
-      <div class="toolbar">
-        <label for="sort-select">Sort</label>
-        <select id="sort-select">
-          <option value="added">Recently added</option>
-          <option value="change">Biggest change since you looked</option>
-          <option value="staleness">Least fresh first</option>
-        </select>
-        <button type="button" class="ghost" id="refresh-now">Refresh now</button>
+      <div class="nav__right">
+        <span class="pill pill--muted" id="source-pill">connecting…</span>
+        <span class="avatar" id="avatar" title="Signed in as the dev user">V</span>
       </div>
+    </header>
 
-      <ul class="watchlist" id="watchlist"></ul>
+    <!-- Live prices for what the user actually watches, in place of index quotes. -->
+    <div class="ticker" id="ticker" aria-label="Your watchlist at a glance"></div>
 
-      <p class="empty" id="empty-state" hidden>
-        Your watchlist is empty. Add a symbol above to start tracking it.
-      </p>
+    <main class="layout">
+      <section class="col-main">
+        <div class="section-head">
+          <h1>What changed since you last looked</h1>
+          <p class="section-sub" id="section-sub">
+            Not today's movers — the diff between the price when you last opened each
+            symbol and the newest one now.
+          </p>
+        </div>
+
+        <div class="chips" id="chips">
+          <button type="button" class="chip is-active" data-filter="all">All</button>
+          <button type="button" class="chip" data-filter="changed">Changed</button>
+          <button type="button" class="chip" data-filter="unseen">Not seen yet</button>
+          <button type="button" class="chip" data-filter="attention">Needs attention</button>
+
+          <div class="chips__right">
+            <select id="sort-select" class="chip chip--select" aria-label="Sort watchlist">
+              <option value="added">Recently added</option>
+              <option value="change">Biggest change</option>
+              <option value="staleness">Least fresh</option>
+            </select>
+            <button type="button" class="chip chip--ghost" id="refresh-now">Refresh</button>
+          </div>
+        </div>
+
+        <p class="form-error" id="form-error" role="alert" hidden></p>
+
+        <div class="card card--flush">
+          <!-- The scroll lives on this wrapper, not the card, so the card keeps
+               its rounded corners while a wide table stays reachable. -->
+          <div class="table-scroll">
+          <table class="wl">
+            <thead>
+              <tr>
+                <th>Company</th>
+                <th class="num">Price</th>
+                <th class="num">Since you last looked</th>
+                <th>Data</th>
+                <th aria-label="Actions"></th>
+              </tr>
+            </thead>
+            <tbody id="watchlist"></tbody>
+          </table>
+          </div>
+          <p class="empty" id="empty-state" hidden>
+            Nothing on your watchlist. Search for a symbol above to start tracking it.
+          </p>
+        </div>
+      </section>
+
+      <aside class="col-side">
+        <div class="card" id="source-card">
+          <h2 class="card__title">Data source</h2>
+          <div class="card__body" id="source-body"></div>
+        </div>
+
+        <div class="card" id="log-card">
+          <h2 class="card__title">Snapshot log</h2>
+          <div class="card__body" id="log-body"></div>
+        </div>
+
+        <div class="card" id="suggest-card">
+          <h2 class="card__title">Add a symbol</h2>
+          <div class="card__body">
+            <div class="suggest" id="suggest-list"></div>
+          </div>
+        </div>
+      </aside>
     </main>
 
     <footer class="footer" id="footer"></footer>
