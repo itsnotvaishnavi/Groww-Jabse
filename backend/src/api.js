@@ -7,8 +7,10 @@
  * a network.
  */
 import express from 'express';
+import { AlertType } from './alerts.js';
 import { ChartRange, buildChart } from './chart.js';
 import { config } from './config.js';
+import { buildIntraday } from './intraday.js';
 import { computeDelta } from './delta.js';
 import { assessFreshness, detectConflict, isMarketOpen, lastMarketClose, nextMarketOpen } from './freshness.js';
 import { ValidationError, normalizeSymbol } from './watchlist.js';
@@ -29,6 +31,7 @@ export function createApi({
   engine,
   summaryService,
   surfacedStore,
+  alertStore,
 }) {
   const router = express.Router();
   const sourceInfo = source.describe();
@@ -304,6 +307,125 @@ export function createApi({
         rangeKey,
         now: Date.now(),
         engine: engine?.params(),
+      }),
+    );
+  });
+
+  /**
+   * Intraday analysis for one symbol.
+   *
+   * Session-scoped throughout, and it says which window it used. The engine's
+   * attention level, confidence and freshness travel nested under `engine` and
+   * labelled as engine-horizon values, so nothing here can be mistaken for a
+   * session figure.
+   */
+  router.get('/intraday/:symbol', (req, res) => {
+    const symbol = normalizeSymbol(req.params.symbol);
+    const now = Date.now();
+
+    const evaluation = engine?.evaluate({ userId: config.devUserId, now });
+    const engineItem = evaluation?.items.find((item) => item.symbol === symbol) ?? null;
+
+    res.json(
+      buildIntraday({
+        snapshotLog,
+        symbol,
+        watchedSymbols: watchlist.list(config.devUserId).map((entry) => entry.symbol),
+        engineItem,
+        sourceInfo,
+        params: {
+          barMs: config.engine.intradayBarMs,
+          carryForwardBars: config.engine.intradayCarryForwardBars,
+          minBars: config.engine.intradayMinBars,
+          minStdDev: config.engine.minStdDev,
+          volatilityTrimShare: config.engine.intradayVolatilityTrimShare,
+          baselineWindowMs: config.engine.intradayBaselineWindowMs,
+          sectorMap: config.sectorMap,
+          sectorMinPeers: config.sectorMinPeers,
+          benchmarkSymbol: config.benchmarkSymbol,
+          patternVolumeRatio: config.engine.patternVolumeRatio,
+          patternLargeMoveSigma: config.engine.patternLargeMoveSigma,
+          patternSustainedShare: config.engine.patternSustainedShare,
+          patternReversalRetrace: config.engine.patternReversalRetrace,
+          patternReversalMinSwingPct: config.engine.patternReversalMinSwingPct,
+          patternVolatilityIncrease: config.engine.patternVolatilityIncrease,
+          patternDivergencePct: config.engine.patternDivergencePct,
+          patternNearExtremeShare: config.engine.patternNearExtremeShare,
+        },
+        now,
+      }),
+    );
+  });
+
+  // ------------------------------------------------------------------ alerts
+
+  /** The user's alert definitions, with their crossing state. */
+  router.get('/alerts', (_req, res) => {
+    if (!alertStore) return res.status(503).json({ error: 'alerts are disabled' });
+    res.json({
+      alerts: alertStore.list(config.devUserId),
+      types: Object.values(AlertType),
+    });
+  });
+
+  /**
+   * Create an alert. Idempotent: the same symbol, type and threshold returns
+   * the existing one rather than stacking duplicates that would all fire at
+   * once.
+   */
+  router.post('/alerts', (req, res) => {
+    if (!alertStore) return res.status(503).json({ error: 'alerts are disabled' });
+
+    const result = alertStore.create(config.devUserId, {
+      symbol: req.body?.symbol ?? '',
+      type: req.body?.type,
+      threshold: req.body?.threshold ?? null,
+    });
+
+    return res.status(result.created ? 201 : 200).json(result);
+  });
+
+  router.delete('/alerts/:id', (req, res) => {
+    if (!alertStore) return res.status(503).json({ error: 'alerts are disabled' });
+
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) throw new ValidationError('alert id must be an integer');
+
+    const removed = alertStore.remove(config.devUserId, id);
+    if (!removed) return res.status(404).json({ error: `no alert ${id}` });
+    return res.json({ id, removed: true });
+  });
+
+  /** The notification list: what has fired, and why. */
+  router.get('/alerts/events', (req, res) => {
+    if (!alertStore) return res.status(503).json({ error: 'alerts are disabled' });
+
+    const limit = Math.min(Number(req.query.limit) || config.alerts.feedLimit, 200);
+    res.json({
+      events: alertStore.events(config.devUserId, limit),
+      unacknowledged: alertStore.unacknowledgedCount(config.devUserId),
+    });
+  });
+
+  router.post('/alerts/events/acknowledge', (_req, res) => {
+    if (!alertStore) return res.status(503).json({ error: 'alerts are disabled' });
+    res.json({ acknowledged: alertStore.acknowledgeAll(config.devUserId) });
+  });
+
+  /**
+   * Force an evaluation now. Alerts are normally evaluated on every ingestion
+   * tick - the moment a crossing can have happened - so this exists for the
+   * demo and for tests rather than as the primary path.
+   */
+  router.post('/alerts/evaluate', (_req, res) => {
+    if (!alertStore || !engine) return res.status(503).json({ error: 'alerts are disabled' });
+
+    const now = Date.now();
+    res.json(
+      alertStore.evaluate({
+        userId: config.devUserId,
+        evaluation: engine.evaluate({ userId: config.devUserId, now }),
+        now,
       }),
     );
   });

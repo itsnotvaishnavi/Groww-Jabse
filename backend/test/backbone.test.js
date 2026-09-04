@@ -424,10 +424,23 @@ test('backfill gives a fresh install a past to diff against', async () => {
 
 // ----------------------------------------------------------------------- API
 
-/** Mount the real router over an in-memory database on an ephemeral port. */
+/**
+ * Mount the real router over an in-memory database on an ephemeral port.
+ *
+ * The source is INERT - both of its methods return null - and that matters.
+ * `POST /watchlist` kicks off a background backfill and poll for the new
+ * symbol, which with a live stub would race this test: a snapshot written at
+ * `Date.now()` after the test has appended its own could become `latest` and
+ * change the delta the assertions check. That made this test fail roughly one
+ * run in three. The journey being tested is the API contract, not ingestion, so
+ * the source is given nothing to write.
+ */
 async function withServer(run) {
   const { db, log, watchlist } = fresh();
-  const source = stubSource();
+  const source = stubSource({
+    getLatestSnapshot: async () => null,
+    getSnapshotAt: async () => null,
+  });
   const ingestor = createIngestor({
     source,
     snapshotLog: log,
@@ -470,14 +483,26 @@ test('the API supports the whole user journey', async () => {
     assert.equal(added.body.symbol, 'RELIANCE');
     assert.equal((await json('/watchlist', { method: 'POST', body: JSON.stringify({ symbol: 'RELIANCE' }) })).status, 200);
 
-    // A brand-new symbol has no baseline, and the reason is explicit.
+    /**
+     * With nothing observed at all the reason is `no_current_observation` - a
+     * different and equally explicit statement. Recording an observation first
+     * isolates the case this assertion is about: added, observed, but never
+     * opened by the user.
+     */
     let list = await json('/watchlist');
     assert.equal(list.body.items.length, 1);
     assert.equal(list.body.items[0].delta.hasBaseline, false);
-    assert.equal(list.body.items[0].delta.reason, 'never_viewed');
+    assert.equal(list.body.items[0].delta.reason, 'no_current_observation');
 
     // Observe, look, observe again - then the delta appears.
     log.append(snap({ timestamp: Date.now() - 2000, price: 1400 }));
+
+    // Now there IS a price, and still no visit: a brand-new symbol has no
+    // baseline, and the reason says which kind of missing it is.
+    list = await json('/watchlist');
+    assert.equal(list.body.items[0].delta.hasBaseline, false);
+    assert.equal(list.body.items[0].delta.reason, 'never_viewed');
+
     assert.equal((await json('/watchlist/RELIANCE/viewed', { method: 'POST' })).status, 200);
     log.append(snap({ timestamp: Date.now(), price: 1414 }));
 

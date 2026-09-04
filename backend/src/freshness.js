@@ -77,6 +77,48 @@ export function nextMarketOpen(at = Date.now()) {
   return null;
 }
 
+/** The NSE continuous session is 6h 15m long. */
+export const SESSION_LENGTH_MS = (SESSION_CLOSE_MIN - SESSION_OPEN_MIN) * 60_000;
+
+/**
+ * The trading session that `at` falls in, or the last completed one.
+ *
+ * Lives here because this module already owns the market calendar - a second
+ * copy of the session hours would be a second thing to get wrong. Used by the
+ * intraday analysis to bound its window, which is why it reports the session's
+ * own open and close alongside the queryable window: mid-session the window
+ * ends at `now`, not at the close, and conflating the two would silently
+ * measure a partial session as though it were a whole one.
+ */
+export function sessionWindow(at = Date.now()) {
+  const { weekday, minuteOfDay, midnightUtc } = istParts(at);
+
+  if (isWeekday(weekday) && minuteOfDay >= SESSION_OPEN_MIN && minuteOfDay <= SESSION_CLOSE_MIN) {
+    const open = midnightUtc + SESSION_OPEN_MIN * 60_000;
+    return {
+      from: open,
+      to: at,
+      sessionOpen: open,
+      sessionClose: midnightUtc + SESSION_CLOSE_MIN * 60_000,
+      isOpen: true,
+      complete: false,
+    };
+  }
+
+  // Outside a session: the last one that finished.
+  const close = lastMarketClose(at);
+  const closeDay = istParts(close);
+
+  return {
+    from: closeDay.midnightUtc + SESSION_OPEN_MIN * 60_000,
+    to: close,
+    sessionOpen: closeDay.midnightUtc + SESSION_OPEN_MIN * 60_000,
+    sessionClose: close,
+    isOpen: false,
+    complete: true,
+  };
+}
+
 /**
  * Freshness states, in the order of "the user should worry":
  *   no_data       - we have never observed this symbol

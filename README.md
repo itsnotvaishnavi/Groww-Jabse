@@ -29,7 +29,7 @@ testable, and making it explainable is what this project is.**
 ```bash
 npm install
 npm start                 # http://localhost:3000
-npm test                  # 107 tests, no network / clock / filesystem
+npm test                  # 151 tests, no network / clock / filesystem
 npm run demo              # build the demo scenario and print it
 ```
 
@@ -142,6 +142,86 @@ from two points.
 
 All of it is computed in `backend/src/chart.js` — the browser scales and
 positions, it does not decide what the high is or where the marker goes.
+
+### Intraday analysis
+
+An "Analyze Intraday" action on the expanded row. Deterministic rolling
+statistics, no model and no forecast: current price, window high and low with
+their timestamps, window return, volatility, volume against normal, movement
+against the market and against sector peers.
+
+**The window is named before any number is shown, and nothing borrows across
+windows.** The app already answers three different questions over three
+different horizons — since you last looked (per-user), 1D (the chart), and the
+session (this panel). A session high quietly sourced from the 1D range would be
+a lie that looks exactly like a fact, so every figure here is recomputed from
+the session window alone and anything the session cannot support reports
+`unavailable` with a reason. There is a test that asks both features for "the
+high" over deliberately different windows and asserts they **disagree**.
+
+The engine's attention level, confidence and freshness are shown because they
+are useful, but they are nested under `engine` and labelled *not
+session-scoped*, because they are computed on the engine's own anomaly horizon.
+
+**In simulator mode there is no exchange session** — the synthetic market runs
+continuously, which is the entire reason it can be demoed while NSE is shut.
+Inventing an open and a close for it would fabricate a boundary the data does
+not have, so the window becomes a trailing stretch of the same *length* as an
+NSE session and says plainly that it is not one.
+
+Patterns are emitted only where the data supports them: unusual volume spike,
+unusually large movement, sustained movement, sudden reversal, volatility
+increase, divergence from market or sector, near the window high or low. Each
+is past-tense and carries the evidence that produced it.
+
+> "Unusually large" is measured against the window's own **trimmed** volatility.
+> The naive comparison cannot work: a move delivered in one jump *is* `sd × √n`
+> by construction, so it would score exactly 1σ however violent it was — the
+> outlier inflating the very yardstick it is measured against. Trimming the
+> largest few returns before estimating the scale fixes it.
+
+**Nothing here is forward-looking.** No BUY, SELL, HOLD, target price or
+prediction, and a test scans all generated text for that vocabulary.
+
+### Alerts
+
+Five types: price crosses above, price falls below, change since last viewed
+exceeds, attention becomes HIGH, unusual volume.
+
+**The crossing state machine is the whole problem.** A naive alert fires on
+every evaluation where the condition holds, so a ₹1350 threshold with the price
+at ₹1352 re-fires every fifteen seconds forever. What "tell me when it crosses
+1350" means is an *edge*, not a level:
+
+| Price | State | Result |
+|---|---|---|
+| 1348 | armed, condition false | nothing |
+| 1350 | armed, condition true | **fires**, disarms |
+| 1351 | disarmed | nothing |
+| 1352 | disarmed | nothing |
+| 1348 | below the reset band | re-arms, silent |
+| 1352 | armed, condition true | **fires again** |
+
+With **hysteresis**, because re-arming exactly at the threshold is not enough —
+a price oscillating 1349.9 / 1350.1 would satisfy "crossed" on every wobble.
+Re-arming needs the value a configurable band clear of the line (0.1% of the
+threshold for prices; a fixed rupee band cannot suit both a ₹275 stock and a
+₹4,000 one).
+
+The `armed` flag lives in the database, so **a restart cannot turn a move the
+user has already been told about back into news.** Tested by rebuilding the
+store over the same database.
+
+**Data quality gates everything.** An alert is only evaluated against an
+observation the freshness layer calls `live` or `delayed`. A stale price fires
+nothing; a `market_closed` period is not movement, so nothing fires during it.
+Skipped evaluations record why and **leave the crossing state untouched** —
+arming or disarming from data we have just declared untrustworthy would let a
+stale reading suppress the real crossing that follows.
+
+Evaluation hangs off the ingestion tick, because the moment new observations
+land is exactly when a crossing can have happened — so an alert fires whether or
+not anyone has the page open.
 
 ### One definition of "needs attention"
 
@@ -401,6 +481,11 @@ so the sharding boundary is a user.
 | `GET` | `/api/watchlist` | Scored, ranked, explained watchlist |
 | `GET` | `/api/summary` | "Since you were away" (`?awayMs=` dev override) |
 | `GET` | `/api/chart/:symbol` | Chart series (`?range=since_viewed\|1d`) |
+| `GET` | `/api/intraday/:symbol` | Session analysis: high, low, return, volatility, volume, relatives, patterns |
+| `GET` `POST` | `/api/alerts` | List / create alert definitions |
+| `DELETE` | `/api/alerts/:id` | Remove an alert |
+| `GET` | `/api/alerts/events` | The notification list: what fired and why |
+| `POST` | `/api/alerts/evaluate` | Force an evaluation (demo affordance) |
 | `GET` | `/api/meta` | Source, config, engine parameters, pipeline health |
 | `GET` | `/api/sectors` | The static sector map |
 | `GET` | `/api/symbols` | Suggestion list |
@@ -447,6 +532,8 @@ backend/src/
   ingest.js           poll loop + boot backfill
   summary.js          "since you were away"
   chart.js            the chart series: two ranges, high/low, marker
+  intraday.js         session analysis - its own window, never borrowed
+  alerts.js           definitions, the crossing state machine, events
   api.js              HTTP surface
   engine/
     numeric.js        every arithmetic hazard, in one place
@@ -493,7 +580,7 @@ Everything lives in [config.js](backend/src/config.js); nothing else reads
 ## Tests
 
 ```bash
-npm test    # 107 tests
+npm test    # 151 tests
 ```
 
 No network, no filesystem, no uncontrolled clock — in-memory SQLite, stub
@@ -579,7 +666,10 @@ which is the shape a real conflict actually takes. Both are asserted in
 
 ## Deliberately out of scope
 
-Alerts, a notification centre, LLM integration, an intraday
-analysis panel, stock discovery or recommendations, gamification,
-authentication, a chatbot, price prediction. Each would have cost P0 quality,
-and the scoring engine is the submission.
+LLM integration, stock discovery or recommendations, gamification,
+authentication, a chatbot, price prediction.
+
+Price charts, intraday analysis and alerts were on this list during P0 and have
+since been scoped in deliberately — the chart, then the intraday panel and
+alerts. Everything still listed above remains out, and the scoring engine is
+still the submission.

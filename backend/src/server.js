@@ -10,6 +10,7 @@ import express from 'express';
 import { REPO_ROOT, config } from './config.js';
 import { createApi } from './api.js';
 import { closeDb, getDb } from './db.js';
+import { createAlertStore } from './alerts.js';
 import { createEngine } from './engine/index.js';
 import { createSurfacedStore } from './engine/surfaced.js';
 import { assessFreshness } from './freshness.js';
@@ -34,12 +35,32 @@ if (seeded.length > 0) {
   console.log(`[boot] seeded watchlist with ${seeded.join(', ')}`);
 }
 
+const surfacedStore = createSurfacedStore(db);
+const alertStore = createAlertStore(db, config.alerts);
+
+/**
+ * Alerts are evaluated on every ingestion tick, because that is the moment a
+ * threshold crossing can have happened - so an alert fires whether or not
+ * anyone has the page open. The engine is built below; the hook reads it
+ * lazily through the closure so the wiring order stays readable.
+ */
 const ingestor = config.ingestEnabled
   ? createIngestor({
       source,
       snapshotLog,
       watchlist,
       intervalMs: config.ingestIntervalMs,
+      afterTick: () => {
+        const now = Date.now();
+        const result = alertStore.evaluate({
+          userId: config.devUserId,
+          evaluation: engine.evaluate({ userId: config.devUserId, now }),
+          now,
+        });
+        for (const alert of result.fired) {
+          console.log(`[alert] ${alert.reason}`);
+        }
+      },
     })
   : null;
 
@@ -51,7 +72,6 @@ const ingestor = config.ingestEnabled
  * can hold still. A default parameter buried three modules down would make the
  * determinism guarantee unverifiable.
  */
-const surfacedStore = createSurfacedStore(db);
 const engine = createEngine({
   snapshotLog,
   watchlist,
@@ -120,6 +140,7 @@ app.use(
     engine,
     summaryService,
     surfacedStore,
+    alertStore,
   }),
 );
 

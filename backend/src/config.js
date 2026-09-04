@@ -53,9 +53,22 @@ export const config = {
    * against, and on a fresh clone there isn't one - so we ask the source to
    * describe the recent past and record it.
    */
-  backfillHours: num(process.env.BACKFILL_HOURS, 6),
-  /** Safety cap so a large backfillHours can't stall boot or bloat the log. */
-  backfillMaxPoints: num(process.env.BACKFILL_MAX_POINTS, 400),
+  /**
+   * Twelve hours, not six - and the extra six are load-bearing.
+   *
+   * The intraday panel compares a session-length window against the stretch
+   * immediately BEFORE it. With only a session's worth of history there is
+   * nothing before the window, so "volume vs normal" and "volatility increase"
+   * could never be computed and would report unavailable forever. A window plus
+   * its own baseline is the minimum a session comparison needs.
+   */
+  backfillHours: num(process.env.BACKFILL_HOURS, 12),
+  /**
+   * Raised in step, so doubling the span does not halve the resolution: 12h
+   * across 800 points is the same ~54s spacing as 6h across 400, which keeps
+   * the backfill dense enough for a 60-second bar grid.
+   */
+  backfillMaxPoints: num(process.env.BACKFILL_MAX_POINTS, 800),
 
   /**
    * A snapshot is considered stale once it is older than
@@ -265,6 +278,42 @@ export const config = {
     summaryTopN: num(process.env.ENGINE_SUMMARY_TOP_N, 5),
 
     /**
+     * INTRADAY ANALYSIS.
+     *
+     * Its own window, its own thresholds. Nothing here is shared with the
+     * anomaly horizon or the chart, because the whole point of the intraday
+     * panel is that a session number is a session number.
+     */
+    intradayBarMs: num(process.env.INTRADAY_BAR_MS, 60_000),
+    intradayCarryForwardBars: num(process.env.INTRADAY_CARRY_FORWARD_BARS, 2),
+    /** Below this many bars in the window, the metrics decline to answer. */
+    intradayMinBars: num(process.env.INTRADAY_MIN_BARS, 8),
+    /**
+     * How much history "normal" means for the volume and volatility
+     * comparisons. It is the stretch immediately BEFORE the window, never the
+     * window itself and never the 1D chart's range.
+     */
+    intradayBaselineWindowMs: num(process.env.INTRADAY_BASELINE_MS, 6 * 60 * 60_000),
+    /**
+     * Share of the largest absolute bar returns trimmed before estimating the
+     * scale that "unusually large movement" is judged against. Without the
+     * trim, a move delivered in one jump inflates its own yardstick and can
+     * never register as large - see intraday.js.
+     */
+    intradayVolatilityTrimShare: Number(process.env.INTRADAY_VOL_TRIM ?? 0.1),
+
+    /** Pattern thresholds - each an observation, none a forecast. */
+    patternVolumeRatio: Number(process.env.INTRADAY_PATTERN_VOLUME ?? 1.8),
+    /** Window return as a multiple of the window's OWN realised volatility. */
+    patternLargeMoveSigma: Number(process.env.INTRADAY_PATTERN_SIGMA ?? 1.5),
+    patternSustainedShare: Number(process.env.INTRADAY_PATTERN_SUSTAINED ?? 0.62),
+    patternReversalRetrace: Number(process.env.INTRADAY_PATTERN_RETRACE ?? 0.6),
+    patternReversalMinSwingPct: Number(process.env.INTRADAY_PATTERN_MIN_SWING_PCT ?? 0.4),
+    patternVolatilityIncrease: Number(process.env.INTRADAY_PATTERN_VOL_INCREASE ?? 1.6),
+    patternDivergencePct: Number(process.env.INTRADAY_PATTERN_DIVERGENCE_PCT ?? 0.75),
+    patternNearExtremeShare: Number(process.env.INTRADAY_PATTERN_NEAR_EXTREME ?? 0.12),
+
+    /**
      * Floors below which a signal contributes to the score but earns NO
      * written reason.
      *
@@ -280,5 +329,23 @@ export const config = {
     reasonMinRelativePct: Number(process.env.ENGINE_REASON_MIN_RELATIVE_PCT ?? 0.4),
     /** Below this, "moved in line with the market" is the honest description. */
     reasonInlineWithMarketPct: Number(process.env.ENGINE_REASON_INLINE_PCT ?? 0.4),
+  },
+
+  /**
+   * ALERTS.
+   *
+   * The hysteresis bands are the interesting part: re-arming exactly at the
+   * threshold would let a price oscillating either side of the line fire on
+   * every wobble, so a value has to come this far clear before the alert is
+   * eligible again.
+   */
+  alerts: {
+    /** Proportional for prices: a fixed rupee band cannot suit 275 and 4000. */
+    hysteresisPricePct: Number(process.env.ALERT_HYSTERESIS_PRICE_PCT ?? 0.001),
+    /** Absolute for the already scale-free types. */
+    hysteresisChangePct: Number(process.env.ALERT_HYSTERESIS_CHANGE_PCT ?? 0.25),
+    hysteresisVolumeRatio: Number(process.env.ALERT_HYSTERESIS_VOLUME ?? 0.2),
+    /** How many fired alerts the notification list shows. */
+    feedLimit: num(process.env.ALERT_FEED_LIMIT, 20),
   },
 };

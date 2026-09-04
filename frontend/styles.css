@@ -1123,6 +1123,284 @@ select:focus-visible {
   text-align: center;
 }
 
+/* ==================== intraday analysis and alerts ===================== */
+
+.row-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.row-actions .btn.is-active {
+  border-color: var(--green);
+  color: var(--green);
+  background: var(--green-tint);
+}
+
+.intraday-slot,
+.alert-slot {
+  margin-bottom: 14px;
+}
+
+/* The window is named before any number, because every figure below is scoped
+   to it and a session number must never be read as a 1D number. */
+.ip__window {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--closed);
+  border-radius: var(--radius);
+  background: var(--bg);
+  margin-bottom: 12px;
+}
+
+.ip__window-label {
+  font-weight: 650;
+  font-size: 13px;
+}
+
+.ip__window-span {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.ip__window-note {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  line-height: 1.5;
+}
+
+.ip__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 12px;
+}
+
+.ip__block {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  padding: 10px 12px;
+}
+
+.ip__block--wide {
+  grid-column: 1 / -1;
+}
+
+.ip__title {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  margin-bottom: 8px;
+}
+
+.ip__title em {
+  font-style: normal;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+  color: var(--delayed);
+}
+
+.ip__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  padding: 4px 0;
+  border-bottom: 1px solid #f4f4f6;
+}
+
+.ip__row:last-child {
+  border-bottom: 0;
+}
+
+.ip__k {
+  color: var(--text-dim);
+  flex: none;
+}
+
+.ip__v {
+  text-align: right;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.ip__v em,
+.ip__flag {
+  display: block;
+  font-style: normal;
+  font-family: var(--sans);
+  font-size: 10.5px;
+  color: var(--text-faint);
+  margin-top: 1px;
+}
+
+.ip__flag {
+  display: inline;
+  color: var(--delayed);
+}
+
+/* An unavailable metric prints its reason, never a substituted number. */
+.ip__v--off {
+  font-family: var(--sans);
+  font-style: italic;
+  color: var(--text-faint);
+}
+
+.ip__patterns {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ip__patterns li {
+  font-size: 12.5px;
+  color: var(--text-mid);
+  line-height: 1.5;
+}
+
+.ip__pattern-code {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin-right: 6px;
+}
+
+.ip__note,
+.ip__meta {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--text-faint);
+  line-height: 1.55;
+}
+
+/* ---------------------------------- alerts --------------------------------- */
+
+.al {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  padding: 10px 12px;
+}
+
+.al__list {
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.al__list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+.al__desc {
+  flex: 1;
+  color: var(--text);
+}
+
+.al__state {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--green);
+  background: var(--green-tint);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+
+.al__state--fired {
+  color: var(--delayed);
+  background: #fdf4e5;
+}
+
+.al__form {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.al__form select,
+.al__form input {
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12.5px;
+}
+
+.al__form input {
+  width: 90px;
+}
+
+.al__error {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--red);
+}
+
+/* --------------------------- the notification list ------------------------- */
+
+.al__feed {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.al__feed li {
+  border-left: 2px solid var(--border);
+  padding-left: 9px;
+}
+
+.al__feed li.is-new {
+  border-left-color: var(--green);
+}
+
+.al__feed-reason {
+  display: block;
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.45;
+}
+
+.al__feed-meta {
+  display: block;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  margin-top: 2px;
+}
+
+.al__ack {
+  margin-bottom: 10px;
+  height: 28px;
+  font-size: 12px;
+}
+
 /* ============================== audit trail ============================== */
 
 .wl__audit > td {

@@ -104,6 +104,56 @@ CREATE TABLE IF NOT EXISTS surfaced_signals (
 
 CREATE INDEX IF NOT EXISTS surfaced_user_symbol
   ON surfaced_signals (user_id, symbol);
+
+-- Alert definitions, and their threshold-crossing state.
+--
+-- The armed column is the whole point. Without it a 1350 threshold with the price at
+-- 1352 re-fires on every poll; with it the alert answers an EDGE rather than a
+-- level - it fires on the crossing, disarms, and only re-arms once the price
+-- has come back a hysteresis band clear of the threshold. See alerts.js.
+--
+-- It lives in the database rather than in memory so that a restart cannot turn
+-- a crossing the user has already been told about back into news.
+CREATE TABLE IF NOT EXISTS alerts (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id             TEXT    NOT NULL,
+  symbol              TEXT    NOT NULL,
+  type                TEXT    NOT NULL,
+  threshold           REAL,
+  created_at          INTEGER NOT NULL,
+  enabled             INTEGER NOT NULL DEFAULT 1,
+  armed               INTEGER NOT NULL DEFAULT 1,
+  last_fired_at       INTEGER,
+  fire_count          INTEGER NOT NULL DEFAULT 0,
+  last_observed       REAL,
+  last_evaluated_at   INTEGER,
+  -- Why the last evaluation declined to act: a stale price, a closed market, an
+  -- unavailable value. Recorded so a silent alert can be explained.
+  last_skipped_reason TEXT
+);
+
+CREATE INDEX IF NOT EXISTS alerts_user ON alerts (user_id, symbol);
+
+-- Fired alerts. Append-only in practice but NOT trigger-locked like snapshots:
+-- these are records of what this app did, not observations about the market, and
+-- a user acknowledging one is a legitimate update.
+CREATE TABLE IF NOT EXISTS alert_events (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  alert_id     INTEGER NOT NULL,
+  user_id      TEXT    NOT NULL,
+  symbol       TEXT    NOT NULL,
+  type         TEXT    NOT NULL,
+  fired_at     INTEGER NOT NULL,
+  observed     REAL,
+  threshold    REAL,
+  -- The sentence shown to the user: what fired, and on what observation.
+  reason       TEXT    NOT NULL,
+  data_quality TEXT,
+  acknowledged INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS alert_events_user
+  ON alert_events (user_id, fired_at DESC);
 `;
 
 /**

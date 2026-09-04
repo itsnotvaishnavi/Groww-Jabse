@@ -13,7 +13,15 @@
  */
 import { config } from './config.js';
 
-export function createIngestor({ source, snapshotLog, watchlist, intervalMs }) {
+/**
+ * @param afterTick optional hook run once a poll has finished writing.
+ *        Alerts hang off this: the moment new observations land is exactly when
+ *        a threshold crossing can have happened, so evaluating here means an
+ *        alert fires whether or not anyone has the page open. It is awaited
+ *        inside the same guard as the tick, so a slow hook cannot let two
+ *        evaluations overlap, and a throwing hook cannot kill the loop.
+ */
+export function createIngestor({ source, snapshotLog, watchlist, intervalMs, afterTick }) {
   const sourceInfo = source.describe();
 
   const stats = {
@@ -24,6 +32,7 @@ export function createIngestor({ source, snapshotLog, watchlist, intervalMs }) {
     absences: 0,
     failures: 0,
     skippedOverlaps: 0,
+    afterTickFailures: 0,
     lastTickAt: null,
     lastTickDurationMs: null,
     lastError: null,
@@ -92,6 +101,17 @@ export function createIngestor({ source, snapshotLog, watchlist, intervalMs }) {
           recordSuccess(symbol);
         } catch (error) {
           recordFailure(symbol, error);
+        }
+      }
+      if (afterTick) {
+        try {
+          await afterTick({ written });
+        } catch (error) {
+          // A failing hook is an incident in the hook, not in ingestion. The
+          // observations are already written and must not be rolled back or
+          // retried on its account.
+          stats.afterTickFailures += 1;
+          stats.lastError = { symbol: null, message: `afterTick: ${error.message}`, at: Date.now() };
         }
       }
     } finally {

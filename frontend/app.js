@@ -12,6 +12,7 @@
  */
 
 import { createChart } from './chart.js';
+import { createPanels } from './panels.js';
 
 const POLL_INTERVAL_MS = 5_000;
 
@@ -35,6 +36,7 @@ const el = {
   awaySimulate: document.getElementById('away-simulate'),
   sourceBody: document.getElementById('source-body'),
   logBody: document.getElementById('log-body'),
+  alertFeed: document.getElementById('alert-feed'),
   footer: document.getElementById('footer'),
 };
 
@@ -227,6 +229,18 @@ function conflictRow(item) {
  * importing them, so neither file depends on the other's internals.
  */
 const chart = createChart({ api, inr, escapeHtml, directionClass, signed, duration });
+
+/** Intraday analysis and alerts, same dependency-injection arrangement. */
+const panels = createPanels({
+  api,
+  inr,
+  escapeHtml,
+  directionClass,
+  signed,
+  duration,
+  ago,
+  whenIstPrecise,
+});
 
 async function loadAudit(cell, symbol) {
   try {
@@ -554,12 +568,45 @@ function detailRow(item) {
   const row = node(
     `<tr class="wl__audit"><td colspan="5" class="audit">
        <div class="chart-slot"></div>
+       <div class="row-actions">
+         <button type="button" class="btn" data-action="intraday">Analyze Intraday</button>
+         <button type="button" class="btn" data-action="alert">Set Alert</button>
+       </div>
+       <div class="intraday-slot" hidden></div>
+       <div class="alert-slot" hidden></div>
        ${detailPanel(item)}
        <div class="audit__observations">Loading observations…</div>
      </td></tr>`,
   );
   void chart.load(row.querySelector('.chart-slot'), item.symbol);
   void loadAudit(row.querySelector('.audit__observations'), item.symbol);
+
+  /**
+   * Both panels are loaded on demand rather than with the row. The intraday
+   * analysis is a second batched query and the alert list is a third; paying
+   * for them on every expand - and on every five-second poll that re-renders an
+   * expanded row - would be waste for a panel most users will not open.
+   */
+  const intradaySlot = row.querySelector('.intraday-slot');
+  row.querySelector('[data-action="intraday"]').addEventListener('click', (event) => {
+    const open = intradaySlot.hidden;
+    intradaySlot.hidden = !open;
+    event.currentTarget.classList.toggle('is-active', open);
+    if (open) void panels.loadIntraday(intradaySlot, item.symbol);
+  });
+
+  const alertSlot = row.querySelector('.alert-slot');
+  row.querySelector('[data-action="alert"]').addEventListener('click', (event) => {
+    const open = alertSlot.hidden;
+    alertSlot.hidden = !open;
+    event.currentTarget.classList.toggle('is-active', open);
+    if (open) {
+      void panels.loadAlerts(alertSlot, item.symbol, () =>
+        panels.loadAlertFeed(el.alertFeed),
+      );
+    }
+  });
+
   return row;
 }
 
@@ -877,6 +924,7 @@ async function refresh() {
     renderAway(summary);
     renderLogCard(meta);
     renderSuggestions();
+    void panels.loadAlertFeed(el.alertFeed);
   } catch (error) {
     el.formError.textContent = `Refresh failed: ${error.message}`;
     el.formError.hidden = false;
