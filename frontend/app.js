@@ -13,6 +13,7 @@
 
 import { createChart } from './chart.js';
 import { createPanels } from './panels.js';
+import { DEFAULT_SENSITIVITY, SENSITIVITY, displayGroupFor } from './sensitivity.js';
 
 const POLL_INTERVAL_MS = 5_000;
 
@@ -28,6 +29,9 @@ const el = {
   sort: document.getElementById('sort-select'),
   refreshNow: document.getElementById('refresh-now'),
   markAllSeen: document.getElementById('mark-all-seen'),
+  sensitivity: document.getElementById('sensitivity-select'),
+  historyChips: document.getElementById('history-chips'),
+  historyBody: document.getElementById('history-body'),
   tbody: document.getElementById('watchlist'),
   empty: document.getElementById('empty-state'),
   sectionSub: document.getElementById('section-sub'),
@@ -698,7 +702,21 @@ function detailRow(item) {
 const FILTERS = {
   all: () => true,
   changed: (i) => i.changeSinceViewed.available && i.changeSinceViewed.percent !== 0,
-  unseen: (i) => !i.changeSinceViewed.available,
+  /**
+   * "No baseline", read from the engine's group rather than from whether a
+   * delta came back.
+   *
+   * `!changeSinceViewed.available` looked equivalent and is not: a row whose
+   * newest observation is the one the user already saw has a perfectly good
+   * baseline and simply nothing newer to diff. Against a frozen feed this chip
+   * counted the entire watchlist as "not seen yet" moments after the user had
+   * explicitly marked all of it seen - while the band below correctly showed
+   * those same rows as Stable and Meaningful.
+   *
+   * The fallback keeps the chip working with the engine disabled, where there
+   * are no groups to read.
+   */
+  unseen: (i) => (i.attentionGroup ? i.attentionGroup === 'unseen' : !i.changeSinceViewed.available),
   /**
    * The engine's own flag, not a second definition. This chip used to count
    * stale-or-conflicting rows while the summary banner counted HIGH and
@@ -908,6 +926,14 @@ function renderLogCard(meta) {
 }
 
 /**
+ * Attention sensitivity lives in its own module so the test suite can import
+ * it without a DOM and assert that it changes no number. See sensitivity.js.
+ */
+let sensitivity = DEFAULT_SENSITIVITY;
+
+const displayGroupOf = (item) => displayGroupFor(item, sensitivity);
+
+/**
  * The presentation groups, in the order a returning user wants them.
  *
  * `key` matches the engine's own `attentionGroup` field. Nothing here decides
@@ -948,11 +974,21 @@ const GROUPS = [
 ];
 
 function groupHeaderRow(group, count) {
+  /**
+   * The attention band states its own threshold whenever sensitivity has moved
+   * it off the engine's bar. Without that line the band's count and the away
+   * banner's count could differ with nothing on screen explaining why - the
+   * banner reports what the ENGINE found, this reports what you asked to see,
+   * and both are true only if each says which it is.
+   */
+  const sensitivityNote =
+    group.key === 'needs_attention' ? SENSITIVITY[sensitivity].note : null;
+
   return node(
     `<tr class="wl__group wl__group--${group.tone}"><td colspan="5">
        <span class="wl__group-label">${escapeHtml(group.label)}</span>
        <span class="wl__group-count">${count}</span>
-       <span class="wl__group-note">${escapeHtml(group.note)}</span>
+       <span class="wl__group-note">${escapeHtml(sensitivityNote ?? group.note)}</span>
      </td></tr>`,
   );
 }
@@ -986,7 +1022,7 @@ function render(payload) {
     for (const item of visible) rows.push(...rowsFor(item));
   } else {
     for (const group of GROUPS) {
-      const inGroup = visible.filter((item) => item.attentionGroup === group.key);
+      const inGroup = visible.filter((item) => displayGroupOf(item) === group.key);
 
       /**
        * Empty groups are omitted rather than shown as empty bands. On a quiet
@@ -1010,10 +1046,17 @@ function render(payload) {
       'Nothing on your watchlist. Search for a symbol above to start tracking it.';
   }
 
-  const seen = payload.items.filter((i) => i.changeSinceViewed.available).length;
+  /**
+   * Rows that HAVE a baseline - the same question the "No baseline yet" band
+   * answers, so it is answered the same way. Counting rows with a computable
+   * delta instead reported "0 of 4 have a baseline" immediately after the user
+   * marked all four seen, because a frozen feed leaves the baseline in place
+   * and simply provides nothing newer to diff against it.
+   */
+  const withBaseline = payload.items.filter((i) => !FILTERS.unseen(i)).length;
   el.sectionSub.textContent =
     `Not today's movers — the diff between the price when you last opened each symbol and the newest one now. ` +
-    `${seen} of ${payload.items.length} have a baseline to compare against.`;
+    `${withBaseline} of ${payload.items.length} have a baseline to compare against.`;
 
   el.footer.innerHTML = `
     Prices come from <strong>${escapeHtml(payload.source.name)}</strong>.
@@ -1023,6 +1066,111 @@ function render(payload) {
         : 'Quotes are typically delayed 15–20 minutes; the timestamp shown is the one the source attributes, never the time it was fetched.'
     }
     Every number above traces to a logged observation — open a row's chevron to see them.`;
+}
+
+// -------------------------------------------------------- change history
+
+/**
+ * The change-history filter. `null` is "all"; otherwise an engine level.
+ * In-session, like sensitivity - and like sensitivity it selects, it does not
+ * compute.
+ */
+let historyLevel = null;
+
+/**
+ * HIGH and MODERATE are the only levels that can appear, because they are the
+ * only ones ever surfaced. "Meaningful" is the user-facing name for MODERATE,
+ * matching the watchlist band.
+ */
+const HISTORY_LEVEL_LABEL = { HIGH: 'High attention', MODERATE: 'Meaningful' };
+
+async function loadHistory() {
+  try {
+    const query = historyLevel ? `?level=${encodeURIComponent(historyLevel)}` : '';
+    const { events, counts } = await api(`/history${query}`);
+
+    for (const chip of el.historyChips.querySelectorAll('.chip[data-history]')) {
+      const key = chip.dataset.history;
+      const count = key === 'all' ? counts.all : (counts[key] ?? 0);
+      chip.classList.toggle('is-active', (key === 'all' ? null : key) === historyLevel);
+      chip.innerHTML = `${chip.textContent.replace(/\s*\d+$/, '').trim()} <span class="count">${count}</span>`;
+    }
+
+    if (events.length === 0) {
+      /**
+       * Two different empties, because they mean different things: nothing has
+       * been surfaced at all, versus nothing at this level. Telling a user with
+       * a busy history that they have none would be simply wrong.
+       */
+      el.historyBody.innerHTML = `<p class="history__empty">${
+        counts.all === 0
+          ? 'Nothing surfaced yet. When something meaningful changes while you are away, it will be recorded here.'
+          : 'No events at this level. Try “All”.'
+      }</p>`;
+      return;
+    }
+
+    el.historyBody.innerHTML = events.map(historyEntry).join('');
+  } catch (error) {
+    el.historyBody.innerHTML = `<p class="history__empty">Could not load the history: ${escapeHtml(
+      error.message,
+    )}</p>`;
+  }
+}
+
+function historyEntry(event) {
+  const level = HISTORY_LEVEL_LABEL[event.level] ?? event.level;
+
+  /**
+   * The delta is the one recorded at surface time. A row that had no baseline
+   * then says so rather than showing a zero, which would be a measurement
+   * nobody made.
+   */
+  const change =
+    event.changePct == null
+      ? '<span class="chg--none">no baseline at the time</span>'
+      : `<span class="${directionClass(event.changePct)}">${signed(
+          event.changePct,
+        )}% since you last checked</span>`;
+
+  const shownAgain =
+    event.surfaceCount > 1
+      ? `<span class="hist__again" title="Shown on ${event.surfaceCount} visits">shown ${event.surfaceCount}×</span>`
+      : '';
+
+  /**
+   * "Since you last checked" leads the engine's reason list, and it is the
+   * same fact as the change line above - so the entry was printing it twice,
+   * once at 2dp and once at 1dp, which reads like two different numbers.
+   *
+   * Filtered for display only; the stored line is untouched, and this matches
+   * on a deterministic template rather than guessing.
+   */
+  const why = event.reasons.filter((line) => !line.endsWith('since you last checked'));
+
+  return `
+    <article class="hist">
+      <div class="hist__when">
+        <span class="hist__time">${escapeHtml(clockIst(event.at))}</span>
+        <span class="hist__ago">${escapeHtml(ago(Date.now() - event.at))}</span>
+      </div>
+      <div class="hist__what">
+        <div class="hist__head">
+          <span class="hist__sym">${escapeHtml(event.symbol)}</span>
+          <span class="level level--${escapeHtml(event.level)}">${escapeHtml(level)}</span>
+          ${shownAgain}
+        </div>
+        <p class="hist__chg">${change}</p>
+        ${
+          why.length > 0
+            ? `<p class="hist__why">Why it matters</p>
+               <ul class="hist__reasons">${why
+                 .map((line) => `<li>${escapeHtml(line)}</li>`)
+                 .join('')}</ul>`
+            : ''
+        }
+      </div>
+    </article>`;
 }
 
 // ----------------------------------------------------- since you were away
@@ -1181,6 +1329,12 @@ async function refresh() {
     renderAway(summary);
     renderLogCard(meta);
     renderSuggestions();
+    /**
+     * After the summary, deliberately: the summary is what RECORDS a surfaced
+     * signal, so loading the history first would show the page as it was one
+     * moment before the event it just created.
+     */
+    void loadHistory();
     void panels.loadAlertFeed(el.alertFeed);
   } catch (error) {
     el.formError.textContent = `Refresh failed: ${error.message}`;
@@ -1252,7 +1406,24 @@ el.chips.addEventListener('click', (event) => {
   render(lastPayload);
 });
 
+el.historyChips.addEventListener('click', (event) => {
+  const chip = event.target.closest('.chip[data-history]');
+  if (!chip) return;
+  historyLevel = chip.dataset.history === 'all' ? null : chip.dataset.history;
+  void loadHistory();
+});
+
 el.sort.addEventListener('change', () => render(lastPayload));
+
+/**
+ * Sensitivity is a re-render, not a refetch: every value it selects on is
+ * already in the payload the client is holding. Nothing is asked of the server
+ * and nothing is recomputed.
+ */
+el.sensitivity.addEventListener('change', () => {
+  sensitivity = el.sensitivity.value;
+  render(lastPayload);
+});
 
 /**
  * "Mark all as seen" - one explicit user action, one baseline stamp.

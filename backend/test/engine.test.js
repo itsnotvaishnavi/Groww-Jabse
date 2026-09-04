@@ -546,6 +546,39 @@ test('rows are grouped by the engine, and grouping changes no score', () => {
   }
 });
 
+/**
+ * "NO NEW OBSERVATION" IS NOT "NO BASELINE".
+ *
+ * A frozen or stale feed produces a row whose newest observation is the one the
+ * user already saw. That row HAS a baseline - there is just nothing newer to
+ * diff against it. Grouping on `available` alone put it under "No baseline
+ * yet", and after a mark-all against a stopped feed that swallowed every row
+ * on the watchlist: four good baselines, all reported as having none.
+ */
+test('a row with a baseline and no newer observation is not "unseen"', () => {
+  const { log, watchlist, engine } = harness();
+
+  watchlist.add(USER, 'FROZEN');
+  seed(log, 'FROZEN', { price: calm(100) });
+
+  // Marked seen at the newest observation: the baseline IS the latest row.
+  watchlist.markViewed(USER, 'FROZEN', T0);
+
+  const item = itemFor(engine.evaluate({ userId: USER, now: T0 }), 'FROZEN');
+
+  assert.equal(item.changeSinceViewed.available, false, 'no delta is computable');
+  assert.equal(item.changeSinceViewed.reason, 'no_new_observation_since_view');
+  assert.ok(item.lastViewedAt != null, 'but the baseline exists');
+  assert.notEqual(item.attentionGroup, 'unseen', 'so it must not claim to have none');
+
+  // A genuinely never-viewed row still is unseen.
+  watchlist.add(USER, 'NEVER');
+  seed(log, 'NEVER', { price: calm(50) });
+  const never = itemFor(engine.evaluate({ userId: USER, now: T0 }), 'NEVER');
+  assert.equal(never.changeSinceViewed.reason, 'never_viewed');
+  assert.equal(never.attentionGroup, 'unseen');
+});
+
 test('the meaningful group is real movement that did not reach the bar', () => {
   const { log, watchlist, engine } = harness();
 

@@ -824,6 +824,106 @@ select:focus-visible {
   min-width: 88px;
 }
 
+/* ======================== change history ======================== */
+
+.history {
+  margin-top: 28px;
+}
+
+.history__title {
+  font-size: var(--fs-lg);
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+
+.history__empty {
+  margin: 0;
+  padding: 4px 0;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+/* One entry: when on the left, what on the right. The time column is fixed so
+   the symbols line up down the page and the timeline reads as a timeline. */
+.hist {
+  display: flex;
+  gap: 16px;
+  padding: 13px 0;
+  border-top: 1px solid var(--border);
+}
+
+.hist:first-child {
+  border-top: 0;
+  padding-top: 2px;
+}
+
+.hist__when {
+  display: flex;
+  flex-direction: column;
+  width: 76px;
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.hist__time {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.hist__ago {
+  font-size: var(--fs-3xs);
+  color: var(--text-faint);
+}
+
+.hist__what {
+  min-width: 0;
+  flex: 1;
+}
+
+.hist__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.hist__sym {
+  font-size: var(--fs-sm);
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.hist__again {
+  font-size: var(--fs-3xs);
+  color: var(--text-faint);
+}
+
+.hist__chg {
+  margin: 3px 0 0;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.hist__why {
+  margin: 7px 0 2px;
+  font-size: var(--fs-3xs);
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.hist__reasons {
+  margin: 0;
+  padding-left: 16px;
+  font-size: var(--fs-xs);
+  color: var(--text-mid);
+}
+
+.hist__reasons li {
+  margin-bottom: 2px;
+}
+
 /* ---- ingestion heartbeat ---- */
 
 .beat {

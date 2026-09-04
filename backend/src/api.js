@@ -146,6 +146,48 @@ export function createApi({
     res.json(scenarioCatalogue());
   });
 
+  /**
+   * The change history: meaningful events, newest first.
+   *
+   * Read straight out of the surfaced-signal store, which has recorded which
+   * signals were presented and when since the engine shipped - so this is a
+   * view over existing data rather than a second history system. Every entry
+   * carries the reasons and the delta CAPTURED WHEN IT WAS SURFACED, not
+   * recomputed now.
+   *
+   * `?level=HIGH|MODERATE` filters. There are no LOW or "stable" entries by
+   * construction: nothing quiet is ever surfaced, and the absence of change is
+   * not an event.
+   */
+  router.get('/history', (req, res) => {
+    if (!surfacedStore) return res.status(503).json({ error: 'history is disabled' });
+
+    const level = req.query.level ?? null;
+    if (level != null && !['HIGH', 'MODERATE'].includes(level)) {
+      throw new ValidationError('level must be HIGH or MODERATE');
+    }
+
+    const limit = boundedLimit(req.query.limit, 50, 200);
+    const events = surfacedStore.history(config.devUserId, { limit, level });
+
+    res.json({
+      userId: config.devUserId,
+      generatedAt: Date.now(),
+      limit,
+      level,
+      /** Counts over the unfiltered window, so the filter chips can show them. */
+      counts: (() => {
+        const all = surfacedStore.history(config.devUserId, { limit });
+        return {
+          all: all.length,
+          HIGH: all.filter((e) => e.level === 'HIGH').length,
+          MODERATE: all.filter((e) => e.level === 'MODERATE').length,
+        };
+      })(),
+      events,
+    });
+  });
+
   /** The static sector map, so the UI can explain why a peer group is what it is. */
   router.get('/sectors', (_req, res) => {
     const bySector = {};

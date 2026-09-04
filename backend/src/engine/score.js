@@ -254,8 +254,35 @@ export const AttentionGroup = {
   STABLE: 'stable',
 };
 
+/**
+ * "There is nothing to compare against" - which is NOT the same as "there is
+ * nothing new to report".
+ *
+ * `changeSinceViewed` is unavailable for several distinct reasons, and only
+ * some of them mean no baseline exists. `no_new_observation_since_view` is the
+ * odd one out: the user HAS a baseline, and the newest observation is simply
+ * the one they already saw - which is exactly what a frozen or stale feed
+ * produces.
+ *
+ * Grouping on `available` alone swallowed the whole watchlist into "No
+ * baseline yet" the moment a user marked everything seen against a feed that
+ * had stopped: four rows with perfectly good baselines, all reported as having
+ * none. The group turns on why, not on whether a number came back.
+ */
+const NO_BASELINE_REASONS = new Set([
+  'never_viewed',
+  'no_observation_at_last_view',
+  'no_current_observation',
+  'unusable_baseline_price',
+]);
+
 export function attentionGroupFor({ level, features, engine }) {
-  if (!features.changeSinceViewed.available) return AttentionGroup.UNSEEN;
+  const change = features.changeSinceViewed;
+
+  if (!change.available && NO_BASELINE_REASONS.has(change.reason)) {
+    return AttentionGroup.UNSEEN;
+  }
+
   if (needsAttentionFor(level)) return AttentionGroup.NEEDS_ATTENTION;
   return nothingNotableAbout({ features, engine }).negligible
     ? AttentionGroup.STABLE

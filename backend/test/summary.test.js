@@ -364,6 +364,127 @@ test('surfaced state survives a restart', () => {
   assert.equal(reopened.count(USER), 1);
 });
 
+// ========================================================= change history
+
+/**
+ * THE CHANGE HISTORY IS A VIEW OVER SURFACED SIGNALS.
+ *
+ * Not a second history system: the store already recorded which signals were
+ * presented and when. What it was missing was WHAT they said, and those are
+ * captured at surface time - so the timeline reproduces the event the user was
+ * told about rather than describing the same symbol as it looks now.
+ */
+test('the change history records what was surfaced, with what it said', () => {
+  const { log, watchlist, surfacedStore, summaryService } = harness();
+  watchlist.add(USER, 'MOVER');
+  seed(log, 'MOVER', { price: calmThenJump(100, 0.02), volume: (i) => (i === 150 ? 5000 : 1000) });
+  seed(log, BENCHMARK_SYMBOL, { price: calm(20_000) });
+  watchlist.markViewed(USER, 'MOVER', T0 - 30 * 60_000);
+
+  assert.deepEqual(surfacedStore.history(USER), [], 'nothing surfaced yet, so no history');
+
+  const summary = summaryService.build({ userId: USER, now: T0, record: true });
+  const [event] = surfacedStore.history(USER);
+
+  assert.ok(event, 'presenting a signal writes one event');
+  assert.equal(event.symbol, 'MOVER');
+  assert.equal(event.at, T0, 'timestamped when it became news');
+  assert.equal(event.level, summary.top[0].level, 'the level it was surfaced at');
+  assert.equal(event.baselineAt, T0 - 30 * 60_000, 'the baseline it was measured against');
+
+  // The delta and the reasons are the ones the user was shown, verbatim.
+  assert.equal(event.changePct, summary.top[0].changeSinceViewed.percent);
+  assert.deepEqual(event.reasons, summary.top[0].reasonText);
+  assert.ok(event.reasons.length > 0, 'an event without reasons explains nothing');
+});
+
+test('history is newest first, and re-presenting is not a new event', () => {
+  const { log, watchlist, surfacedStore, summaryService } = harness();
+
+  for (const symbol of ['ALPHA', 'BETA']) {
+    watchlist.add(USER, symbol);
+    seed(log, symbol, {
+      price: calmThenJump(100, 0.02),
+      volume: (i) => (i === 150 ? 5000 : 1000),
+    });
+    watchlist.markViewed(USER, symbol, T0 - 30 * 60_000);
+  }
+  seed(log, BENCHMARK_SYMBOL, { price: calm(20_000) });
+
+  summaryService.build({ userId: USER, now: T0, record: true });
+  const first = surfacedStore.history(USER);
+  assert.equal(first.length, 2);
+
+  /**
+   * The same signals presented again at the same instant: the user reloading
+   * the page. Not the market doing something twice - so the count must not
+   * grow and the timestamps must not move.
+   *
+   * Deliberately the same instant. A later one would be a different
+   * evaluation, and with this harness's one-bar anomaly horizon the signals
+   * have decayed out of the window by then - which would test the engine's
+   * horizon rather than the store's idempotence.
+   */
+  summaryService.build({ userId: USER, now: T0, record: true });
+  const second = surfacedStore.history(USER);
+
+  assert.equal(second.length, 2, 'a reload is not two more events');
+  assert.deepEqual(
+    second.map((e) => e.at),
+    first.map((e) => e.at),
+    'first_surfaced_at is when it became news and never moves',
+  );
+  assert.ok(
+    second.every((e) => e.surfaceCount === 2),
+    'but the store still knows it was shown twice',
+  );
+
+  // Newest first, with symbol breaking a same-millisecond tie so the order is
+  // total rather than whatever SQLite found convenient.
+  assert.deepEqual(second.map((e) => e.symbol), ['ALPHA', 'BETA']);
+});
+
+test('history filters by level and never contains a quiet row', () => {
+  const { log, watchlist, surfacedStore, summaryService } = harness();
+
+  watchlist.add(USER, 'LOUD');
+  seed(log, 'LOUD', { price: calmThenJump(100, 0.05), volume: (i) => (i >= 148 ? 9000 : 1000) });
+  watchlist.add(USER, 'CALM');
+  seed(log, 'CALM', { price: calm(100) });
+  seed(log, BENCHMARK_SYMBOL, { price: calm(20_000) });
+  watchlist.markAllViewed(USER, T0 - 30 * 60_000);
+
+  summaryService.build({ userId: USER, now: T0, record: true });
+
+  const all = surfacedStore.history(USER);
+  assert.ok(all.length >= 1);
+  assert.ok(
+    all.every((e) => e.level === 'HIGH' || e.level === 'MODERATE'),
+    'nothing quiet is ever surfaced, so LOW cannot appear',
+  );
+  assert.ok(!all.some((e) => e.symbol === 'CALM'), 'the calm row was never news');
+
+  assert.ok(surfacedStore.history(USER, { level: 'HIGH' }).every((e) => e.level === 'HIGH'));
+  assert.deepEqual(surfacedStore.history(USER, { level: 'MODERATE' }).filter((e) => e.level !== 'MODERATE'), []);
+});
+
+test('history survives a restart, because it is in the database', () => {
+  const { db, log, watchlist, summaryService } = harness();
+  watchlist.add(USER, 'MOVER');
+  seed(log, 'MOVER', { price: calmThenJump(100, 0.02), volume: (i) => (i === 150 ? 5000 : 1000) });
+  seed(log, BENCHMARK_SYMBOL, { price: calm(20_000) });
+  watchlist.markViewed(USER, 'MOVER', T0 - 30 * 60_000);
+  summaryService.build({ userId: USER, now: T0, record: true });
+
+  // Rebuild the store over the same database: that is what a restart is.
+  const reopened = createSurfacedStore(db);
+  const events = reopened.history(USER);
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].symbol, 'MOVER');
+  assert.ok(events[0].reasons.length > 0, 'the reasons came back too, not just the row');
+});
+
 test('the fingerprint tracks the event, not the exact score', () => {
   const features = {
     changeSinceViewed: { available: true, percent: 2.1 },

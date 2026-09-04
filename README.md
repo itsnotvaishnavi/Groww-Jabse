@@ -15,10 +15,11 @@ no build step, no API keys.
 
 ## Contents
 
-[The problem](#the-problem) · [The engine](#the-engine) ·
-[Data engineering](#data-engineering) · [Product surface](#product-surface) ·
-[Setup](#setup) · [Architecture](#architecture) ·
-[Decisions](#decisions-and-why) · [Scalability](#scalability) ·
+[The problem](#the-problem) · [What Jabse is](#what-jabse-is-in-one-paragraph) ·
+[The engine](#the-engine) · [Data engineering](#data-engineering) ·
+[Product surface](#product-surface) · [Setup](#setup) ·
+[Architecture](#architecture) · [Decisions](#decisions-and-why) ·
+[Scalability](#scalability) · [Deferred](#considered-and-deferred) ·
 [Limitations](#known-limitations-stated-rather-than-hidden)
 
 ---
@@ -48,6 +49,49 @@ code that decides.
 So: **defining "meaningful", making it testable, and making it explainable** is
 what this project is. The name is the thesis — *jab se*, since. Since when?
 Since **you** last looked.
+
+---
+
+## What Jabse is, in one paragraph
+
+**Jabse is not trying to show everything that happened in the market. It
+answers a narrower question: what meaningfully changed since I last checked?**
+
+Everything follows from taking that question literally:
+
+- **The baseline is explicit.** Only an action by the user — "Mark seen", "Mark
+  all as seen" — moves the point they are comparing from. Loading a page,
+  polling, opening a row or refreshing never does.
+- **Historical observations are immutable.** The snapshot log is append-only and
+  the database enforces it, so a price the user has already seen cannot be
+  rewritten under them.
+- **Meaningfulness is deterministic.** Same snapshots, same config, same clock,
+  same answer — byte for byte. No model, no randomness, no `random_state`
+  belonging to someone else.
+- **Data quality is part of the result, not a footnote.** Every score ships with
+  a confidence, every price with a freshness state, and "we could not measure
+  this" is a first-class answer that changes the arithmetic.
+- **Explanations are evidence.** Every sentence is a template over a number the
+  system holds and can show you. There is no LLM anywhere in the path.
+
+### Why this is not a screener
+
+Groww already has an intraday screener, and it is good at what it does:
+price, volume, RSI, MACD, breakout signals — the whole indicator surface,
+across the market, on demand.
+
+Jabse is deliberately not trying to reproduce that. A screener answers "what
+does the market look like right now, by these measures". Jabse answers "what
+changed for **me** since **my** last visit, and does it deserve my attention".
+The differentiation is **the diff against the user's own last view**, not the
+number of indicators on screen. Adding twenty more indicators would make it a
+worse version of a tool that already exists; making the personal baseline
+first-class is the thing nothing else does.
+
+That is also why there is no discovery, no recommendation, no screening across
+the market, and no gamification. Each is listed under
+[Deliberately out of scope](#deliberately-out-of-scope) as a decision with a
+reason, not a gap.
 
 ---
 
@@ -262,8 +306,9 @@ evaluate all stand, because the data really is old. That is what makes the
 
 ### `last_viewed_at` semantics
 
-Written **only** by an explicit "Mark seen". Never as a side effect of loading a
-page or fetching the summary. If a read consumed it, every delta would erase
+Written **only** by an explicit "Mark seen" or "Mark all as seen". Never as a
+side effect of loading a page, rendering, polling, opening a symbol, expanding
+its details, or refreshing. If a read consumed it, every delta would erase
 itself on first render and could never be revisited.
 
 A new watchlist entry starts at `NULL`, which is meaningfully different from
@@ -310,6 +355,139 @@ account.
 
 Loading it does not consume `last_viewed_at`, so the summary survives being
 read.
+
+### Mark seen, mark all as seen, and being caught up
+
+**Mark Seen resets the user's comparison baseline, not market history.**
+
+That sentence is the product. Marking seen moves `last_viewed_at` — the point
+future change is measured *from* — and touches nothing else. It writes no
+snapshot, deletes none, and rewrites none; the log's `BEFORE UPDATE` and
+`BEFORE DELETE` triggers would abort the attempt if it tried. Every observation
+the app ever made is still there afterwards, and there is a test that compares
+the log byte for byte across a mark to prove it.
+
+"Mark all as seen" stamps every symbol at **one instant, in one transaction**.
+Per-row `Date.now()` calls would leave the rows milliseconds apart, and "how
+long were you away" is the *minimum* `last_viewed_at` across the watchlist — so
+a partial write would silently anchor the next visit to whichever row happened
+to go first.
+
+Afterwards the app says so explicitly: **"You're all caught up. Jabse will
+watch what changes next."** That state is computed server-side beside the counts
+it is made of, and is *derived rather than stored* — which is exactly what makes
+it survive a refresh. The next request recomputes it from the same baselines, so
+it persists for precisely as long as it remains true. It is deliberately strict:
+every symbol must have a baseline, nothing may have moved since those baselines,
+and nothing may be asking for attention. A symbol never marked seen blocks it,
+because "caught up" is a claim about a comparison, and for that symbol no
+comparison exists yet.
+
+### Attention grouping
+
+The watchlist is grouped rather than merely sorted:
+
+| Group | What it means |
+|---|---|
+| **Needs attention** | At or above the engine's existing attention bar |
+| **Meaningful changes** | Something notable happened to this stock, below the bar |
+| **Stable** | Measured against your baseline, nothing notable to report |
+| **No baseline yet** | Nothing to compare against — not the same as stable |
+
+This is **presentation over the engine's verdict**, not a second scoring pass.
+No new level, no new threshold, and nothing recomputed in the browser: the
+engine publishes an `attentionGroup` per row, and the mapping reuses the level
+floor's own negligibility test — extracted as `nothingNotableAbout()` so the
+floor and the grouping cannot drift apart. A second copy of those three
+comparisons in the UI would be a second definition of "notable", and this
+codebase has already paid for one of those.
+
+**The fourth group exists because of what it would otherwise be lying about.**
+A symbol with no baseline is not stable. "Stable" reports a measurement; an
+unseen symbol is the absence of one, and folding it in would have the app
+claiming a comparison it never made.
+
+*Meaningful changes* is the group an ordinary percentage-change watchlist has no
+way to express: a 0.4% move on three times normal volume is not "a small move",
+it is a small move with something behind it.
+
+### Attention sensitivity
+
+A three-way control — low, medium, high — over how aggressively
+already-computed results are surfaced.
+
+It is a **display threshold and nothing more**. It changes no score, no weight,
+no confidence, no freshness, no alert, and no stored value; a test asserts the
+evaluation is byte-identical before and after every setting is applied. The
+scale it uses is the engine's own published levels, never an invented
+percentage:
+
+| Setting | Surfaced prominently |
+|---|---|
+| Low | `HIGH` only |
+| Medium | the engine's own attention bar, exactly as it computes it |
+| High | the bar, plus the meaningful-but-below-bar group |
+
+At medium it returns the engine's answer unchanged. The other two move rows
+between the attention band and the meaningful band, and the band **states the
+threshold it is using** — because the "since you were away" banner reports what
+the *engine* found while the band reports what *you asked to see*, and two
+numbers on one screen are only both true if each says which it is.
+
+In-session by decision: one display preference does not warrant a settings
+table, and persisting it would mean a returning user could be shown less than
+the engine found without remembering they had asked for that.
+
+It lives in [frontend/sensitivity.js](frontend/sensitivity.js), with no DOM in
+it, specifically so the test suite can import it and check the claim that it
+cannot affect a score. An untested claim of that kind is worth very little.
+
+### Change history
+
+A chronological view of what Jabse has actually surfaced — timestamp, symbol,
+level, the change against the baseline it was measured on, and the reasons that
+qualified it.
+
+It is a **view over the surfaced-signal store**, not a parallel history system.
+That table has recorded which signals were presented and when since the engine
+shipped; what it was missing was *what they said*, so two columns were added to
+it. The reasons and the delta are **captured at surface time** — recomputing
+them when the timeline is rendered would describe whatever the market is doing
+at that later moment while displaying yesterday's timestamp, which is the same
+reason a fired alert stores its diagnosis at fire time.
+
+Ordering is by when a signal *became* news, not when it was last shown:
+re-presenting an unchanged event on a later page load is a reload, not a second
+event, so the count grows and the timestamp does not. Symbol breaks
+same-millisecond ties so the order is total.
+
+**There are no "stable" entries, by construction.** Nothing quiet is ever
+surfaced, and the absence of change is not an event. Filters are `All`, `High`
+and `Meaningful` — which are the only two levels that can appear.
+
+### Search by ticker or company name
+
+`TCS`, `tcs`, `Tata Consultancy` and `consultancy` all resolve to the same
+instrument. Resolution happens server-side over the active source's own symbol
+list, in a deliberate order: a ticker the source knows wins outright, then an
+exact name, then a unique substring — simple `includes`, no fuzzy library, no
+scoring, no search service.
+
+**Ambiguity is reported, not guessed.** "tata" is Tata Consultancy *and* Tata
+Motors; picking one would put the wrong stock on someone's watchlist, so the
+candidates come back and the user picks. Input that is still ticker-shaped but
+unlisted passes through, because `getSymbols()` returns a featured handful while
+Yahoo knows thousands.
+
+### Ingestion heartbeat
+
+One line: `Last sync 19:42:18 · next ~19:42:33`.
+
+The ingestor reports its own schedule — `nextTickAt` is `lastTickAt +
+intervalMs` from the module that owns the `setInterval`, and **null whenever the
+loop is not running**, so the UI can never draw a countdown with no timer behind
+it. When ingestion is disabled it says that instead. There is no timer in the
+frontend; the line refreshes on the same poll as everything else.
 
 ### The chart
 
@@ -500,6 +678,8 @@ before the end, outside the engine's fifteen-minute anomaly horizon, so it score
 | `POST` | `/api/watchlist` | Add (`201` new, `200` already present) |
 | `DELETE` | `/api/watchlist/:symbol` | Remove (history is kept) |
 | `POST` | `/api/watchlist/:symbol/viewed` | Stamp "I have now seen this" |
+| `POST` | `/api/watchlist/viewed-all` | Mark all as seen: one baseline instant for every symbol |
+| `GET` | `/api/history` | Change history (`?level=HIGH\|MODERATE`, `?limit=`) |
 | `GET` | `/api/snapshots/:symbol` | Raw log — the audit trail |
 | `POST` | `/api/ingest/tick` | Force a poll now (demo affordance) |
 
@@ -539,7 +719,7 @@ recompute — no threshold, weight or level boundary appears anywhere in
 ```bash
 npm install
 npm start                 # http://localhost:3000
-npm test                  # 191 tests, no network / clock / filesystem
+npm test                  # 216 tests, no network / clock / filesystem
 npm run demo              # the full fixture
 npm run demo -- stock_outperforms 6h    # a named scenario
 ```
@@ -600,7 +780,7 @@ Everything lives in [config.js](backend/src/config.js); nothing else reads
 ### Tests
 
 ```bash
-npm test    # 191 tests
+npm test    # 216 tests
 ```
 
 No network, no filesystem, no uncontrolled clock — in-memory SQLite, stub
@@ -722,6 +902,7 @@ backend/src/
 
 frontend/                plain ES modules, no framework, no build step
   index.html  app.js  panels.js  chart.js  styles.css
+  sensitivity.js        the display threshold - no DOM, so it is testable
 ```
 
 ---
@@ -996,6 +1177,68 @@ returns scores; it does not know where the observations came from.
   an indexed table, would need batching at a thousand.
 - **Sector map is static and small** (16 symbols). A real product takes this from
   an exchange classification feed.
+
+## Considered and deferred
+
+These were designed, costed, and left out. Each is genuinely valuable; each was
+deferred for a reason stronger than "no time", and an unfinished feature is
+worse than a missing one.
+
+### 52-week high/low proximity
+
+Genuinely valuable — a stock close to its yearly high or low can deserve
+attention even when today's movement alone does not score highly.
+
+But the snapshot log holds hours, not a year. Doing it properly needs
+source-level yearly range data, a per-symbol cache, a refresh policy, simulator
+support, seeded scenarios and extra validation. **That is a data-sourcing
+change, not a UI feature**, and it would arrive shallow if rushed.
+
+### Opening gap detection
+
+A meaningful opening gap needs a previous session close, a current session open,
+and session-boundary awareness. The simulator runs continuously and models no
+session — that is precisely why it can be demoed while NSE is shut. Adding gaps
+for live data only would make the app behave differently in live and
+deterministic modes, which costs the demo its reproducibility.
+
+### CUSUM change-point detection
+
+Interesting because it answers a *different* question — "did this stock's regime
+change?" rather than "was this move unusual?". But it would alter the
+statistical signal layer, need parameter tuning, scenario design and validation,
+could change scoring behaviour, and would widen the test surface — on a build
+that is finished and green.
+
+### Event classification (shock / continuation / reversal)
+
+Depends on the deferred change-point work above, and expands its scope.
+
+### Post-event behaviour tracking
+
+Whether an event continued, reversed or normalised depends on event
+classification, and adds temporal logic on top of it.
+
+### Volatility as a scored signal
+
+Volatility relative to a prior window is already computed and shown in the
+intraday panel. Promoting it into the *weighted* meaningful-change score is a
+different matter: new weights, a renormalisation review, new scenarios and
+extensive regression tests. It stays a reported metric, not a scored signal.
+
+### A runtime data-mode toggle
+
+Source selection stays configuration: `DATA_SOURCE=yahoo npm start`. A UI
+switch would mean changing sources while ingestion is running, mid-flight, with
+two sources' freshness semantics and conflict handling interleaved in one log.
+
+### Multi-provider live fallback
+
+The `DataSource` abstraction would take a second live provider cleanly, which is
+exactly why it is tempting. But a second provider expands source
+reconciliation, conflict handling, freshness semantics, testing and failure
+modes all at once — and the existing conflict path already demonstrates the
+interesting part of that problem.
 
 ## Deliberately out of scope
 

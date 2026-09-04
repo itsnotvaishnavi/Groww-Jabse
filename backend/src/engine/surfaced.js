@@ -82,11 +82,31 @@ export function createSurfacedStore(db) {
 
     insert: db.prepare(
       `INSERT INTO surfaced_signals
-         (user_id, symbol, fingerprint, level, epoch, first_surfaced_at, last_surfaced_at, surface_count)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+         (user_id, symbol, fingerprint, level, epoch,
+          first_surfaced_at, last_surfaced_at, surface_count, reasons, change_pct)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
        ON CONFLICT (user_id, symbol, fingerprint) DO UPDATE SET
          last_surfaced_at = excluded.last_surfaced_at,
          surface_count = surface_count + 1`,
+    ),
+
+    /**
+     * The change history, newest first.
+     *
+     * first_surfaced_at, not last: the timeline records when a signal BECAME
+     * news, and re-presenting the same unchanged event on a later page load is
+     * not a second event. The ON CONFLICT above deliberately leaves
+     * first_surfaced_at alone for exactly this reason.
+     *
+     * Symbol breaks ties so the order is total: several signals surfaced in the
+     * same millisecond - which is what one page load does - would otherwise
+     * come back in whatever order SQLite found convenient.
+     */
+    history: db.prepare(
+      `SELECT * FROM surfaced_signals
+       WHERE user_id = ?
+       ORDER BY first_surfaced_at DESC, symbol ASC
+       LIMIT ?`,
     ),
 
     countForUser: db.prepare(
@@ -104,10 +124,28 @@ export function createSurfacedStore(db) {
         record.epoch ?? 0,
         at,
         at,
+        /**
+         * Stored as JSON because it is a list, and read back by exactly one
+         * consumer. A join table for a handful of reason codes per event
+         * would be schema for its own sake.
+         */
+        record.reasons ? JSON.stringify(record.reasons) : null,
+        record.changePct ?? null,
       );
     }
     return records.length;
   });
+
+  /** Never let a malformed stored value take the timeline down with it. */
+  function parseReasons(raw) {
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
 
   return {
     /**
@@ -149,6 +187,42 @@ export function createSurfacedStore(db) {
     markSurfaced(userId, records, at = Date.now()) {
       if (records.length === 0) return 0;
       return markMany(userId, records, at);
+    },
+
+    /**
+     * The meaningful-event timeline for one user.
+     *
+     * Only signals that were actually SURFACED are here, which is what makes
+     * this a change history rather than a tick log: the store is written by the
+     * summary when it presents something, so an entry means "the user was told
+     * about this". There are no "stable" entries because nothing quiet is ever
+     * surfaced - the absence of change is not an event.
+     *
+     * @param level optional filter on the engine's own level.
+     */
+    history(userId, { limit = 50, level = null } = {}) {
+      const rows = statements.history.all(userId, Math.max(1, Math.min(limit, 200)));
+
+      return rows
+        .filter((row) => level == null || row.level === level)
+        .map((row) => ({
+          symbol: row.symbol,
+          level: row.level,
+          /** When it became news. */
+          at: row.first_surfaced_at,
+          /** And when it was last still being shown, if that differs. */
+          lastSeenAt: row.last_surfaced_at,
+          surfaceCount: row.surface_count,
+          /**
+           * The baseline this was measured against - the viewing epoch the
+           * fingerprint was cut with. Marking seen starts a new epoch, so an
+           * event recorded afterwards is genuinely a new one.
+           */
+          baselineAt: row.epoch || null,
+          changePct: row.change_pct,
+          reasons: parseReasons(row.reasons),
+          fingerprint: row.fingerprint,
+        }));
     },
 
     count(userId) {

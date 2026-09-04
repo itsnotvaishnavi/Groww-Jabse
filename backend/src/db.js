@@ -199,6 +199,30 @@ function addColumns(db) {
       // actually triggered.
       ddl: 'ALTER TABLE alert_events ADD COLUMN diagnosis TEXT',
     },
+
+    /**
+     * What a surfaced signal actually SAID, captured at surface time.
+     *
+     * The change history reads these. Recomputing the reasons and the delta
+     * when the timeline is rendered would describe whatever the market is
+     * doing now rather than the moment the user was told about - the same
+     * reasoning as alert_events.diagnosis above, and the reason both are
+     * stored rather than derived.
+     *
+     * Two columns on an existing table rather than a second history system:
+     * surfaced_signals already records which signals were presented and when,
+     * so it already IS the event log. It was only missing their content.
+     */
+    {
+      table: 'surfaced_signals',
+      column: 'reasons',
+      ddl: 'ALTER TABLE surfaced_signals ADD COLUMN reasons TEXT',
+    },
+    {
+      table: 'surfaced_signals',
+      column: 'change_pct',
+      ddl: 'ALTER TABLE surfaced_signals ADD COLUMN change_pct REAL',
+    },
   ];
 
   for (const { table, column, ddl } of additions) {

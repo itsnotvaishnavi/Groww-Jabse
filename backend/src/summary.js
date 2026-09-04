@@ -109,6 +109,24 @@ export function createSummaryService({ engine, watchlist, surfacedStore, clock =
           fingerprint: item.signal.fingerprint,
           level: item.level,
           epoch: item.lastViewedAt ?? 0,
+          /**
+           * WHAT IT SAID, captured now.
+           *
+           * The change history reads these back. Recomputing the reasons and
+           * the delta when the timeline is rendered would describe whatever
+           * the market is doing at that later moment, not the event the user
+           * was actually told about - the same reason a fired alert stores its
+           * diagnosis at fire time.
+           */
+          /**
+           * The rendered lines, not the codes. These are the exact sentences
+           * the user was shown, numbers and all - a timeline that regenerated
+           * them from codes later would lose the "6.0σ" and "4.2x" that made
+           * the event legible, and would be reporting today's figures under
+           * yesterday's timestamp.
+           */
+          reasons: item.reasonText,
+          changePct: item.changeSinceViewed.available ? item.changeSinceViewed.percent : null,
         })),
         now,
       );

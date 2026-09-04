@@ -128,6 +128,23 @@
           <button type="button" class="chip" data-filter="attention">Needs attention</button>
 
           <div class="chips__right">
+            <!--
+              How aggressively already-computed results are surfaced. A display
+              threshold over the engine's own levels and groups - it changes no
+              score, no weight and no confidence, and is deliberately not
+              persisted: one in-session setting does not warrant a preferences
+              layer.
+            -->
+            <select
+              id="sensitivity-select"
+              class="chip chip--select"
+              aria-label="Attention sensitivity"
+              title="How aggressively Jabse surfaces what it has already computed. Scores never change."
+            >
+              <option value="low">Sensitivity: low</option>
+              <option value="medium" selected>Sensitivity: medium</option>
+              <option value="high">Sensitivity: high</option>
+            </select>
             <select id="sort-select" class="chip chip--select" aria-label="Sort watchlist">
               <option value="added">Recently added</option>
               <option value="change">Biggest change</option>
@@ -173,6 +190,38 @@
             Nothing on your watchlist. Search for a symbol above to start tracking it.
           </p>
         </div>
+
+        <!--
+          CHANGE HISTORY.
+
+          A view over the surfaced-signal store, which has always recorded
+          which signals were presented and when - not a second history system.
+          Each entry carries the reasons and the delta captured AT THE MOMENT
+          it was surfaced, so the timeline reports the event the user was told
+          about rather than how that symbol looks now.
+
+          There are no "stable" entries by construction: nothing quiet is ever
+          surfaced, and the absence of change is not an event.
+        -->
+        <section class="history" id="history-section">
+          <div class="section-head">
+            <h2 class="history__title">Change history</h2>
+            <p class="section-sub">
+              What Jabse has surfaced, newest first — with the reasons recorded at
+              the time, not recomputed now.
+            </p>
+          </div>
+
+          <div class="chips" id="history-chips">
+            <button type="button" class="chip is-active" data-history="all">All</button>
+            <button type="button" class="chip" data-history="HIGH">High</button>
+            <button type="button" class="chip" data-history="MODERATE">Meaningful</button>
+          </div>
+
+          <div class="card">
+            <div class="card__body" id="history-body"></div>
+          </div>
+        </section>
       </section>
 
       <aside class="col-side">
