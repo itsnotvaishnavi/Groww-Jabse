@@ -520,7 +520,7 @@ select:focus-visible {
 /* Reserve the company column so it never collapses and squeeze the action
    column so the buttons stay on one line. */
 .wl th:first-child {
-  min-width: 224px;
+  min-width: 200px;
 }
 
 .wl th:last-child {
@@ -607,6 +607,18 @@ select:focus-visible {
   color: var(--text-faint);
   font-weight: 400;
   margin-top: 2px;
+}
+
+.price__state {
+  margin-top: 5px;
+}
+
+/* Freshness labels are sentences ("Stale - feed may be down"), and holding them
+   on one line was the single widest thing in the table. Inside a row they wrap. */
+.wl td .pill {
+  white-space: normal;
+  text-align: left;
+  max-width: 15ch;
 }
 
 /* --- delta cell --- */
@@ -734,6 +746,214 @@ select:focus-visible {
   font-size: 11.5px;
   color: var(--text-faint);
   margin-top: 3px;
+}
+
+/* ====================== "since you were away" banner ==================== */
+
+.away {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--green);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, var(--green-tint), var(--bg) 70%);
+  padding: 14px 16px;
+  margin-bottom: 18px;
+}
+
+.away__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.away__headline {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.away__signals {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.away__signal {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+
+.away__sym {
+  font-weight: 650;
+  min-width: 88px;
+}
+
+.away__why {
+  color: var(--text-dim);
+}
+
+.away__seen {
+  font-size: 11px;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1px 6px;
+  background: var(--bg);
+}
+
+/* ============================== level badges ============================= */
+
+.level {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.level--HIGH {
+  color: #a3341c;
+  background: #fdeae5;
+  border-color: #f6c9bb;
+}
+
+.level--MODERATE {
+  color: #8a5c12;
+  background: #fdf4e5;
+  border-color: #f2dfb8;
+}
+
+.level--LOW {
+  color: var(--text-dim);
+  background: var(--bg-alt);
+  border-color: var(--border);
+}
+
+.level__score {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+
+/* Reason lines: the "why", capped so the main view stays scannable. */
+.why {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: 40ch;
+}
+
+.why li {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-mid);
+  position: relative;
+  padding-left: 9px;
+}
+
+.why li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 6px;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.why li.why--caveat {
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+.why li.why--more {
+  color: var(--text-faint);
+  padding-left: 9px;
+}
+
+/* ============================= detail panel ============================= */
+
+.detail {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.detail__block {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  padding: 10px 12px;
+}
+
+.detail__title {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  margin-bottom: 8px;
+}
+
+.detail__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  padding: 3px 0;
+  border-bottom: 1px solid #f4f4f6;
+}
+
+.detail__row:last-child {
+  border-bottom: 0;
+}
+
+.detail__k {
+  color: var(--text-dim);
+}
+
+.detail__v {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.detail__v--off {
+  color: var(--text-faint);
+  font-style: italic;
+  font-family: var(--sans);
+}
+
+.detail__formula {
+  grid-column: 1 / -1;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-dim);
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 9px 12px;
+  overflow-x: auto;
+}
+
+.detail__formula strong {
+  color: var(--text);
 }
 
 /* ============================ conflict banner =========================== */

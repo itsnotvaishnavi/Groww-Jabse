@@ -27,6 +27,10 @@ const el = {
   tbody: document.getElementById('watchlist'),
   empty: document.getElementById('empty-state'),
   sectionSub: document.getElementById('section-sub'),
+  away: document.getElementById('away'),
+  awayHeadline: document.getElementById('away-headline'),
+  awaySignals: document.getElementById('away-signals'),
+  awaySimulate: document.getElementById('away-simulate'),
   sourceBody: document.getElementById('source-body'),
   logBody: document.getElementById('log-body'),
   footer: document.getElementById('footer'),
@@ -160,26 +164,32 @@ function freshnessPill(freshness) {
  * and the second is the app admitting a gap in its own coverage.
  */
 function deltaCell(item) {
-  const { delta } = item;
+  /**
+   * One shape, from the engine. `delta` is the retained alias for
+   * `changeSinceViewed` - the same object, not a second representation of it -
+   * so this reads `available`, `fromPrice` and `toPrice` rather than the older
+   * `hasBaseline`/`from.price` form the pre-engine endpoint returned.
+   */
+  const change = item.changeSinceViewed ?? item.delta;
 
-  if (!delta.hasBaseline) {
+  if (!change.available) {
     const reasons = {
       never_viewed: 'Not seen yet — mark it seen to start tracking changes',
       no_observation_at_last_view:
         'No observation recorded when you last looked, so there is nothing to diff yet',
       no_current_observation: 'Waiting for the first observation from the feed',
+      unusable_baseline_price: 'The recorded baseline price cannot be used',
     };
-    return `<span class="chg--none">${escapeHtml(reasons[delta.reason] ?? 'No baseline')}</span>`;
+    return `<span class="chg--none">${escapeHtml(reasons[change.reason] ?? 'No baseline')}</span>`;
   }
 
-  const cls = directionClass(delta.absolute);
-  const volume = delta.volumeRatio == null ? '' : ` · vol ×${delta.volumeRatio.toFixed(2)}`;
+  const cls = directionClass(change.absolute);
 
   return `
-    <div class="chg ${cls}">${signed(delta.absolute)} (${signed(delta.percent)}%)</div>
+    <div class="chg ${cls}">${signed(change.absolute)} (${signed(change.percent)}%)</div>
     <div class="chg__sub">
-      ₹${inr.format(delta.from.price)} → ₹${inr.format(delta.to.price)} ·
-      you looked ${ago(Date.now() - delta.lastViewedAt)}${volume}
+      ₹${inr.format(change.fromPrice)} → ₹${inr.format(change.toPrice)} ·
+      you looked ${ago(Date.now() - change.lastViewedAt)}
     </div>`;
 }
 
@@ -275,6 +285,9 @@ async function loadAudit(cell, symbol) {
   }
 }
 
+const CROSS = `<svg viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18"
+  stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>`;
+
 const CHEVRON = `<svg viewBox="0 0 24 24" fill="none"><path d="m6 9 6 6 6-6"
   stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
@@ -297,6 +310,48 @@ function observedAt(timestamp) {
         hour12: false,
       })
     : whenIst(timestamp);
+}
+
+/** Reason codes that are caveats about our data rather than market findings. */
+const CAVEAT_CODES = new Set(['low_confidence', 'insufficient_data']);
+
+/** How many reason lines the main view shows before deferring to the detail. */
+const MAX_REASONS_SHOWN = 3;
+
+/**
+ * The "why it matters" cell: the level, and the reasons behind it.
+ *
+ * The level leads because it is the answer to "how important"; the reasons
+ * follow because they are the answer to "why". Both come from the backend - the
+ * frontend does not decide either, and does not recompute a score.
+ *
+ * Capped at three lines so the main table stays scannable; the rest are one
+ * click away in the detail panel. A row with no reasons at all shows none
+ * rather than inventing filler: the engine withheld every claim because
+ * nothing crossed its evidence threshold, and that is worth seeing.
+ */
+function whyCell(item) {
+  const badge = `<span class="level level--${escapeHtml(item.level)}"
+    title="Meaningful change score ${item.meaningfulScore} · confidence ${item.confidence}">
+    ${escapeHtml(item.level)}<span class="level__score">${item.meaningfulScore.toFixed(2)}</span>
+  </span>`;
+
+  const reasons = item.reasonText ?? [];
+  const codes = item.reasons ?? [];
+
+  if (reasons.length === 0) return badge;
+
+  const shown = reasons.slice(0, MAX_REASONS_SHOWN).map((text, i) => {
+    const caveat = CAVEAT_CODES.has(codes[i]) ? ' why--caveat' : '';
+    return `<li class="${caveat.trim()}">${escapeHtml(text)}</li>`;
+  });
+
+  const remaining = reasons.length - shown.length;
+  if (remaining > 0) {
+    shown.push(`<li class="why--more">+${remaining} more in detail</li>`);
+  }
+
+  return `${badge}<ul class="why">${shown.join('')}</ul>`;
 }
 
 function renderRow(item) {
@@ -327,19 +382,20 @@ function renderRow(item) {
         <div class="price__age">${
           freshness.ageMs == null ? 'no data' : ago(freshness.ageMs)
         }</div>
+        <div class="price__state">${freshnessPill(freshness)}</div>
+        ${latest ? `<div class="conf">source confidence ${latest.confidence}</div>` : ''}
       </td>
       <td class="num">${deltaCell(item)}</td>
-      <td>
-        ${freshnessPill(freshness)}
-        ${latest ? `<div class="conf">confidence ${latest.confidence}</div>` : ''}
-      </td>
+      <td>${whyCell(item)}</td>
       <td>
         <div class="actions">
           <button type="button" class="btn btn--primary" data-action="viewed">Mark seen</button>
-          <button type="button" class="btn" data-action="remove">Remove</button>
+          <button type="button" class="btn btn--icon" data-action="remove"
+                  aria-label="Remove ${escapeHtml(item.symbol)}"
+                  title="Remove from watchlist">${CROSS}</button>
           <button type="button" class="btn btn--icon ${isOpen ? 'is-open' : ''}"
-                  data-action="expand" aria-label="Show the observations behind this"
-                  title="Show the observations behind this">${CHEVRON}</button>
+                  data-action="expand" aria-label="Show the detail behind this score"
+                  title="Show the detail behind this score">${CHEVRON}</button>
         </div>
       </td>
     </tr>`);
@@ -364,9 +420,144 @@ function renderRow(item) {
   return row;
 }
 
-function auditRow(item) {
-  const row = node(`<tr class="wl__audit"><td colspan="5" class="audit">Loading…</td></tr>`);
-  void loadAudit(row.querySelector('td'), item.symbol);
+// ------------------------------------------------------------ detail panel
+
+const kv = (label, value, off = false) =>
+  `<div class="detail__row"><span class="detail__k">${escapeHtml(label)}</span>
+   <span class="detail__v${off ? ' detail__v--off' : ''}">${escapeHtml(value)}</span></div>`;
+
+const pct = (n) => (n == null ? '—' : `${n > 0 ? '+' : ''}${n}%`);
+
+/**
+ * Everything behind the score, laid out so a sceptical reader can check it.
+ *
+ * This is the transparency requirement made concrete: the weighted formula with
+ * its actual numbers, each feature's raw value, its availability reason when
+ * absent, and its own confidence. Nothing here is recomputed in the browser -
+ * every figure is a field from the API.
+ */
+function detailPanel(item) {
+  const f = item.features;
+  const b = item.scoreBreakdown;
+
+  const signalBlock = (title, key, rows) => {
+    const feature = f[key];
+    const breakdown = b[key];
+    const head = feature.available
+      ? kv('contributes', `${breakdown.contribution} × ${breakdown.weight} = ${breakdown.weighted}`)
+      : kv('unavailable', feature.reason, true);
+
+    return `<div class="detail__block">
+      <div class="detail__title">${escapeHtml(title)}</div>
+      ${head}
+      ${feature.available ? rows(feature).join('') : ''}
+      ${feature.available ? kv('confidence', String(feature.confidence)) : ''}
+    </div>`;
+  };
+
+  /** Human labels for the signal keys - a camelCase split reads badly. */
+  const SIGNAL_LABEL = {
+    priceAnomaly: 'price',
+    volumeAnomaly: 'volume',
+    marketRelative: 'market',
+    sectorRelative: 'sector',
+  };
+
+  // The formula, with this row's actual numbers substituted in.
+  const terms = Object.entries(b)
+    .filter(([, entry]) => entry.available)
+    .map(([name, entry]) => `${SIGNAL_LABEL[name] ?? name} ${entry.weighted}`);
+
+  const formula = `<div class="detail__formula">
+    <strong>score</strong> = ( ${escapeHtml(terms.join(' + ')) || '0'} ) ÷ ${
+      item.availableWeight
+    } = <strong>${item.meaningfulScore}</strong> → ${escapeHtml(item.level)}
+    <br />
+    <strong>confidence</strong> = observation ${item.confidenceComponents.observation}
+    × freshness ${item.confidenceComponents.freshness}
+    × depth ${item.confidenceComponents.depth}
+    × coverage ${item.confidenceComponents.coverage}
+    = <strong>${item.confidence}</strong>
+  </div>`;
+
+  const change = f.changeSinceViewed;
+
+  return `<div class="detail">
+    ${formula}
+
+    <div class="detail__block">
+      <div class="detail__title">Since you last looked</div>
+      ${
+        change.available
+          ? kv('change', `${pct(change.percent)} (₹${change.absolute})`) +
+            kv('from → to', `₹${inr.format(change.fromPrice)} → ₹${inr.format(change.toPrice)}`) +
+            kv('you looked', whenIstPrecise(change.lastViewedAt) + ' IST') +
+            kv('observations span', duration(change.spanMs)) +
+            kv('confidence', String(change.confidence))
+          : kv('unavailable', change.reason, true)
+      }
+    </div>
+
+    ${signalBlock('Price anomaly', 'priceAnomaly', (x) => [
+      kv('z-score', `${x.z}σ`),
+      kv('return over window', pct(x.returnPct)),
+      kv('baseline mean', pct(x.baselineMeanPct)),
+      kv('baseline std dev', `${x.baselineStdDevPct}%`),
+      kv('window', duration(x.horizonMs)),
+      kv('samples', String(x.sampleSize)),
+      x.flooredStdDev ? kv('std dev floored', 'yes — confidence halved', true) : '',
+      x.clamped ? kv('z clamped', 'yes', true) : '',
+    ])}
+
+    ${signalBlock('Volume anomaly', 'volumeAnomaly', (x) => [
+      kv('ratio', `${x.ratio}×`),
+      kv('latest volume', compact.format(x.latestVolume)),
+      kv('trailing average', compact.format(x.averageVolume)),
+      kv('samples', String(x.sampleSize)),
+    ])}
+
+    ${signalBlock('Market-relative', 'marketRelative', (x) => [
+      kv('excess', pct(x.excessPct)),
+      kv('this symbol', pct(x.symbolReturnPct)),
+      kv(`${x.benchmarkSymbol}`, pct(x.benchmarkReturnPct)),
+      kv('window', duration(x.horizonMs)),
+    ])}
+
+    ${signalBlock('Sector-relative', 'sectorRelative', (x) => [
+      kv('sector', x.sector),
+      kv('excess', pct(x.excessPct)),
+      kv('this symbol', pct(x.symbolReturnPct)),
+      kv('peer mean', pct(x.sectorReturnPct)),
+      kv('peers used', x.peers.join(', ')),
+    ])}
+
+    <div class="detail__block">
+      <div class="detail__title">Data &amp; signal state</div>
+      ${kv('data quality', item.dataQuality)}
+      ${kv('freshness', item.freshness.label)}
+      ${
+        item.latest
+          ? kv('observed for', whenIstPrecise(item.latest.timestamp) + ' IST') +
+            kv('recorded', whenIstPrecise(item.latest.ingestedAt) + ' IST') +
+            kv('source', item.latest.source) +
+            kv('source confidence', String(item.latest.confidence))
+          : ''
+      }
+      ${kv('observations in window', String(item.observationCount))}
+      ${kv('already surfaced', item.alreadySurfaced ? 'yes' : 'no')}
+      ${kv('signal fingerprint', item.signal.fingerprint)}
+    </div>
+  </div>`;
+}
+
+function detailRow(item) {
+  const row = node(
+    `<tr class="wl__audit"><td colspan="5" class="audit">
+       ${detailPanel(item)}
+       <div class="audit__observations">Loading observations…</div>
+     </td></tr>`,
+  );
+  void loadAudit(row.querySelector('.audit__observations'), item.symbol);
   return row;
 }
 
@@ -379,15 +570,16 @@ function auditRow(item) {
  */
 const FILTERS = {
   all: () => true,
-  changed: (i) => i.delta.hasBaseline && i.delta.percent !== 0,
-  unseen: (i) => !i.delta.hasBaseline,
+  changed: (i) => i.changeSinceViewed.available && i.changeSinceViewed.percent !== 0,
+  unseen: (i) => !i.changeSinceViewed.available,
   attention: (i) => i.freshness.isStale || Boolean(i.conflict),
 };
 
 function sortItems(items, mode) {
   const copy = [...items];
   if (mode === 'change') {
-    const magnitude = (i) => (i.delta.hasBaseline ? Math.abs(i.delta.percent) : -1);
+    const magnitude = (i) =>
+      i.changeSinceViewed.available ? Math.abs(i.changeSinceViewed.percent) : -1;
     return copy.sort((a, b) => magnitude(b) - magnitude(a));
   }
   if (mode === 'staleness') {
@@ -412,9 +604,9 @@ function renderTicker(items) {
   el.ticker.innerHTML = items
     .map((item) => {
       const price = item.latest ? `₹${inr.format(item.latest.price)}` : '—';
-      const change = item.delta.hasBaseline
-        ? `<span class="ticker__chg ${directionClass(item.delta.absolute)}">${signed(
-            item.delta.percent,
+      const change = item.changeSinceViewed.available
+        ? `<span class="ticker__chg ${directionClass(item.changeSinceViewed.absolute)}">${signed(
+            item.changeSinceViewed.percent,
           )}%</span>`
         : '<span class="ticker__chg flat">·</span>';
       return `<span class="ticker__item">
@@ -526,7 +718,7 @@ function render(payload) {
     rows.push(renderRow(item));
     const conflict = conflictRow(item);
     if (conflict) rows.push(conflict);
-    if (expanded.has(item.symbol)) rows.push(auditRow(item));
+    if (expanded.has(item.symbol)) rows.push(detailRow(item));
   }
   el.tbody.replaceChildren(...rows);
 
@@ -538,7 +730,7 @@ function render(payload) {
       'Nothing on your watchlist. Search for a symbol above to start tracking it.';
   }
 
-  const seen = payload.items.filter((i) => i.delta.hasBaseline).length;
+  const seen = payload.items.filter((i) => i.changeSinceViewed.available).length;
   el.sectionSub.textContent =
     `Not today's movers — the diff between the price when you last opened each symbol and the newest one now. ` +
     `${seen} of ${payload.items.length} have a baseline to compare against.`;
@@ -553,6 +745,75 @@ function render(payload) {
     Every number above traces to a logged observation — open a row's chevron to see them.`;
 }
 
+// ----------------------------------------------------- since you were away
+
+/** Dev/demo: simulate a long absence so the aggregated view is showable. */
+let simulatedAwayMs = null;
+
+/**
+ * Whether this page session has recorded its signals as surfaced yet.
+ *
+ * The first summary fetch of a session records - that is the moment the user is
+ * genuinely shown the signals. Subsequent polls do not, or a 5-second poll would
+ * mark everything surfaced within seconds of arriving and the distinction would
+ * be worthless. Note this is separate from last_viewed_at, which only "Mark
+ * seen" writes.
+ */
+let awayRecorded = false;
+
+function renderAway(summary) {
+  if (!summary) {
+    el.away.hidden = true;
+    return;
+  }
+
+  el.away.hidden = false;
+  el.awayHeadline.textContent = summary.headline;
+
+  el.awaySimulate.textContent = simulatedAwayMs ? 'Back to real time' : 'Simulate 50h away';
+  el.awaySimulate.classList.toggle('is-active', Boolean(simulatedAwayMs));
+
+  /**
+   * On a long absence the aggregate replaces the enumeration - after two days
+   * nobody wants a tick-by-tick account, they want to know which handful of
+   * things mattered.
+   */
+  if (summary.away.long && summary.aggregate) {
+    const { byLevel, biggestMove } = summary.aggregate;
+    const parts = [
+      `<div class="away__signal"><span class="away__sym">Levels</span>
+        <span class="away__why">${byLevel.HIGH.count} high · ${byLevel.MODERATE.count} moderate · ${byLevel.LOW.count} low</span></div>`,
+    ];
+    if (biggestMove) {
+      parts.push(`<div class="away__signal">
+        <span class="away__sym">Biggest move</span>
+        <span class="away__why">${escapeHtml(biggestMove.symbol)}
+          <span class="${directionClass(biggestMove.percent)}">${signed(
+            biggestMove.percent,
+          )}%</span> · ${escapeHtml(biggestMove.level)}</span></div>`);
+    }
+    el.awaySignals.innerHTML = parts.join('');
+    return;
+  }
+
+  if (summary.top.length === 0) {
+    el.awaySignals.innerHTML =
+      '<div class="away__signal"><span class="away__why">Nothing is asking for your attention right now.</span></div>';
+    return;
+  }
+
+  el.awaySignals.innerHTML = summary.top
+    .map(
+      (signal) => `<div class="away__signal">
+        <span class="away__sym">${escapeHtml(signal.symbol)}</span>
+        <span class="level level--${escapeHtml(signal.level)}">${escapeHtml(signal.level)}</span>
+        <span class="away__why">${escapeHtml(signal.reasonText[0] ?? '')}</span>
+        ${signal.alreadySurfaced ? '<span class="away__seen">seen before</span>' : ''}
+      </div>`,
+    )
+    .join('');
+}
+
 // --------------------------------------------------------------------- loops
 
 let refreshing = false;
@@ -561,9 +822,20 @@ async function refresh() {
   if (refreshing) return;
   refreshing = true;
   try {
-    const [watchlist, meta] = await Promise.all([api('/watchlist'), api('/meta')]);
+    const query = new URLSearchParams();
+    if (simulatedAwayMs) query.set('awayMs', String(simulatedAwayMs));
+    query.set('record', awayRecorded ? 'false' : 'true');
+
+    const [watchlist, meta, summary] = await Promise.all([
+      api('/watchlist'),
+      api('/meta'),
+      api(`/summary?${query}`).catch(() => null),
+    ]);
+    awayRecorded = true;
+
     lastMeta = meta;
     render(watchlist);
+    renderAway(summary);
     renderLogCard(meta);
     renderSuggestions();
   } catch (error) {
@@ -640,6 +912,16 @@ el.sort.addEventListener('change', () => render(lastPayload));
 
 el.refreshNow.addEventListener('click', async () => {
   await api('/ingest/tick', { method: 'POST' }).catch(() => {});
+  await refresh();
+});
+
+/**
+ * The long-absence view cannot otherwise be shown without waiting two days,
+ * and a reviewer should not have to take it on trust. It changes only the
+ * reported duration and the aggregation threshold - never a score.
+ */
+el.awaySimulate.addEventListener('click', async () => {
+  simulatedAwayMs = simulatedAwayMs ? null : 50 * 3_600_000;
   await refresh();
 });
 

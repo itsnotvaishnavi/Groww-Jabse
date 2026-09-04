@@ -88,6 +88,21 @@
 
     <main class="layout">
       <section class="col-main">
+        <!--
+          "Since you were away". Rendered from /api/summary, whose ranking comes
+          from the engine - never from raw percentage change. Reading this does
+          not consume last_viewed_at; only "Mark seen" does.
+        -->
+        <section class="away" id="away" hidden>
+          <div class="away__head">
+            <p class="away__headline" id="away-headline"></p>
+            <button type="button" class="chip chip--ghost" id="away-simulate">
+              Simulate 50h away
+            </button>
+          </div>
+          <div class="away__signals" id="away-signals"></div>
+        </section>
+
         <div class="section-head">
           <h1>What changed since you last looked</h1>
           <p class="section-sub" id="section-sub">
@@ -121,10 +136,15 @@
           <table class="wl">
             <thead>
               <tr>
+                <!--
+                  Freshness lives inside the Price column rather than in one of
+                  its own: it describes that price, and six columns did not fit
+                  the content width without forcing the table to scroll.
+                -->
                 <th>Company</th>
-                <th class="num">Price</th>
+                <th class="num">Price &amp; freshness</th>
                 <th class="num">Since you last looked</th>
-                <th>Data</th>
+                <th>Why it matters</th>
                 <th aria-label="Actions"></th>
               </tr>
             </thead>
