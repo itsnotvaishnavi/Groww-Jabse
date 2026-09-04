@@ -349,6 +349,18 @@ select {
   margin-top: 8px;
 }
 
+/*
+ * The log is deliberately long - forty observations is the point. But an
+ * expanded row must not swallow the page, or opening one symbol's provenance
+ * hides every other symbol. Cap it and let the table scroll inside itself.
+ */
+.audit__scroll {
+  max-height: 300px;
+  overflow-y: auto;
+  overflow-x: auto;
+  border-radius: 6px;
+}
+
 .sparkline {
   display: block;
   width: 100%;
@@ -371,6 +383,10 @@ select {
   color: var(--text-faint);
   padding: 3px 6px 3px 0;
   border-bottom: 1px solid var(--border);
+  /* Column names stay put while the log scrolls under them. */
+  position: sticky;
+  top: 0;
+  background: var(--surface);
 }
 
 .audit td {

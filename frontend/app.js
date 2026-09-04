@@ -70,6 +70,24 @@ function whenIst(timestamp) {
   });
 }
 
+/**
+ * Seconds included. The audit trail exists to prove where a number came from,
+ * and observations are only 15 seconds apart - minute precision makes four
+ * distinct observations all read "13:34", which looks like the table is
+ * repeating itself and undermines the very thing it is there to demonstrate.
+ */
+function whenIstPrecise(timestamp) {
+  return new Date(timestamp).toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+}
+
 const directionClass = (n) => (n > 0 ? 'up' : n < 0 ? 'down' : 'flat');
 const signed = (n, digits = 2) => `${n > 0 ? '+' : ''}${n.toFixed(digits)}`;
 
@@ -294,7 +312,7 @@ async function loadAudit(details, symbol) {
 
     body.innerHTML = `
       ${sparkline(snapshots)}
-      <table>
+      <div class="audit__scroll"><table>
         <thead>
           <tr><th>observed for (IST)</th><th>price</th><th>volume</th><th>source</th><th>conf.</th><th>recorded</th></tr>
         </thead>
@@ -302,7 +320,7 @@ async function loadAudit(details, symbol) {
           ${snapshots
             .map(
               (s) => `<tr>
-                <td>${whenIst(s.timestamp)}</td>
+                <td>${whenIstPrecise(s.timestamp)}</td>
                 <td>₹${inr.format(s.price)}</td>
                 <td>${compact.format(s.volume)}</td>
                 <td>${escapeHtml(s.source)}</td>
@@ -312,7 +330,7 @@ async function loadAudit(details, symbol) {
             )
             .join('')}
         </tbody>
-      </table>`;
+      </table></div>`;
   } catch (error) {
     body.textContent = `Could not load observations: ${error.message}`;
   }
