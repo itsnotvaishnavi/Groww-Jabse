@@ -127,6 +127,50 @@ test('a first visit says so instead of reporting a change of zero', () => {
   assert.match(summary.headline, /First look/);
 });
 
+/**
+ * "You're all caught up" is a claim, so every way of not being caught up has
+ * to block it. A first visit is the important one: with no baseline there is
+ * no comparison, and calling that "caught up" would be the app claiming a
+ * measurement it never made.
+ */
+test('caught up requires a baseline for every symbol and nothing outstanding', () => {
+  const { log, watchlist, summaryService } = harness();
+  watchlist.add(USER, 'STOCK');
+  seed(log, 'STOCK', { price: calm(100) });
+
+  assert.equal(
+    summaryService.build({ userId: USER }).caughtUp,
+    false,
+    'a first visit has no baseline to be caught up against',
+  );
+
+  // Marked seen at the newest observation: nothing newer exists, nothing moved.
+  watchlist.markAllViewed(USER, T0);
+  const caught = summaryService.build({ userId: USER, now: T0 });
+  assert.equal(caught.caughtUp, true);
+  assert.equal(caught.counts.neverViewed, 0);
+  assert.equal(caught.counts.changed, 0);
+  assert.equal(caught.counts.needsAttention, 0);
+
+  // It survives being asked again - it is derived from the baselines, not
+  // stored, so a refresh recomputes the same answer.
+  assert.equal(summaryService.build({ userId: USER, now: T0 }).caughtUp, true);
+
+  // A symbol added afterwards has no baseline, so the claim lapses.
+  watchlist.add(USER, 'OTHER');
+  seed(log, 'OTHER', { price: calm(50) });
+  assert.equal(
+    summaryService.build({ userId: USER, now: T0 }).caughtUp,
+    false,
+    'an unseen symbol is outstanding, not stable',
+  );
+
+  // And an empty watchlist is not "caught up" either - there is nothing to be
+  // caught up on, which the empty state says in its own words.
+  const empty = harness();
+  assert.equal(empty.summaryService.build({ userId: USER }).caughtUp, false);
+});
+
 test('a short absence enumerates what changed and what deserves attention', () => {
   const { log, watchlist, summaryService } = harness();
 
@@ -197,11 +241,13 @@ test('nothing changed is stated plainly rather than padded', () => {
 
   assert.equal(summary.counts.changed, 0);
   /**
-   * Wording updated in the polish pass: "no meaningful changes since you last
-   * checked" says the same thing in the product's own terms, and matches the
-   * phrasing used when things DID move but none of it mattered.
+   * Says the same thing in the product's own terms, rather than showing an
+   * empty panel. The word "meaningful" is deliberately absent: it names the
+   * MEANINGFUL CHANGES group in the watchlist below, and a banner claiming
+   * there are none while that band is on screen contradicts itself.
    */
-  assert.match(summary.headline, /No meaningful changes since you last checked/);
+  assert.match(summary.headline, /Nothing has changed since you last checked/);
+  assert.ok(!/meaningful/i.test(summary.headline), 'one sense of "meaningful" only');
 });
 
 test('an empty watchlist says what to do next, not "these 0 symbols"', () => {
@@ -235,8 +281,15 @@ test('things moving without mattering is its own answer', () => {
   const summary = summaryService.build({ userId: USER, record: false });
 
   assert.ok(summary.counts.changed >= 1, 'something did change');
-  assert.equal(summary.counts.needsAttention, 0, 'but none of it is meaningful');
-  assert.match(summary.headline, /changed, but no meaningful changes/);
+  assert.equal(summary.counts.needsAttention, 0, 'but none of it crossed the attention bar');
+  assert.match(summary.headline, /changed, but nothing needs your attention/);
+
+  /**
+   * The banner counts the attention bar, so it must say so. Claiming "no
+   * meaningful changes" would contradict the MEANINGFUL CHANGES band that this
+   * very row appears under.
+   */
+  assert.ok(!/meaningful/i.test(summary.headline), 'one sense of "meaningful" only');
 });
 
 test('the summary never gives advice or predicts a price', () => {
@@ -546,6 +599,13 @@ test('the API extends the old contract rather than replacing it', async () => {
       'features',
       'dataQuality',
       'alreadySurfaced',
+      /**
+       * The UI groups rows by this field, so it has to be published. It was
+       * added to the engine's item and NOT to this response, and the whole
+       * table rendered empty: every row fell into a group the client could not
+       * see. This list is the guard against that happening again.
+       */
+      'attentionGroup',
     ]) {
       assert.ok(key in item, `the engine contributed "${key}"`);
     }

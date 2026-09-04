@@ -130,6 +130,31 @@ export function createWatchlist(db) {
       return { symbol: normalized, lastViewedAt: at, updated: result.changes > 0 };
     },
 
+    /**
+     * "Mark all as seen" - the same baseline stamp, for every symbol at once.
+     *
+     * ONE instant for the whole watchlist, and one transaction. Stamping each
+     * row with its own Date.now() would leave the rows milliseconds apart, and
+     * "how long were you away" is the MINIMUM last_viewed_at across the
+     * watchlist - so a partial failure would silently anchor the next visit to
+     * whichever row happened to be written first.
+     *
+     * This moves the user's comparison baseline and nothing else. The snapshot
+     * log is not touched, which is not merely a convention here: its
+     * append-only triggers would reject the attempt. Market history stays
+     * exactly as observed; only the point the user is comparing FROM moves.
+     */
+    markAllViewed(userId, at = Date.now()) {
+      const symbols = statements.list.all(userId).map((row) => row.symbol);
+
+      const stamp = db.transaction(() => {
+        for (const symbol of symbols) statements.markViewed.run(at, userId, symbol);
+      });
+      stamp();
+
+      return { symbols, lastViewedAt: at, updated: symbols.length };
+    },
+
     symbolsInUse() {
       return statements.symbolsInUse.all().map((row) => row.symbol);
     },

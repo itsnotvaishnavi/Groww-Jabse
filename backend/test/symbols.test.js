@@ -11,8 +11,14 @@ process.env.SIM_SEED = 'groww-code-2026';
 process.env.SIM_GAP_PROBABILITY = '0.03';
 process.env.SIM_OUTAGE_PROBABILITY = '0.02';
 
-const { canonicalizeSymbol, isBenchmark, venueOf, BENCHMARK_SYMBOL, ValidationError } =
-  await import('../src/symbols.js');
+const {
+  canonicalizeSymbol,
+  isBenchmark,
+  venueOf,
+  resolveSymbolQuery,
+  BENCHMARK_SYMBOL,
+  ValidationError,
+} = await import('../src/symbols.js');
 const { createDatabase } = await import('../src/db.js');
 const { createSnapshotLog } = await import('../src/snapshot-log.js');
 const { createWatchlist } = await import('../src/watchlist.js');
@@ -25,6 +31,96 @@ test('NSE is implied, so every NSE spelling is one instrument', () => {
   for (const spelling of ['RELIANCE', 'reliance', ' Reliance ', 'RELIANCE.NS', 'reliance.ns']) {
     assert.equal(canonicalizeSymbol(spelling), 'RELIANCE', `spelling: "${spelling}"`);
   }
+});
+
+// ------------------------------------------------------ searching by name
+
+/** A stand-in universe: two names sharing a word, so ambiguity is reachable. */
+const UNIVERSE = [
+  { symbol: 'TCS', name: 'Tata Consultancy Services' },
+  { symbol: 'TATAMOTORS', name: 'Tata Motors' },
+  { symbol: 'INFY', name: 'Infosys' },
+  { symbol: 'ITC', name: 'ITC' },
+];
+
+test('a ticker resolves whatever case it is typed in', () => {
+  for (const typed of ['TCS', 'tcs', 'Tcs', '  tCs  ']) {
+    const match = resolveSymbolQuery(typed, UNIVERSE);
+    assert.equal(match.symbol, 'TCS', `typed: "${typed}"`);
+    assert.equal(match.matchedOn, 'symbol');
+  }
+});
+
+test('a company name resolves to its ticker, case-insensitively', () => {
+  for (const typed of [
+    'Tata Consultancy Services',
+    'tata consultancy services',
+    'TATA CONSULTANCY SERVICES',
+    'Tata Consultancy', // a substring, uniquely one company
+    'consultancy',
+  ]) {
+    const match = resolveSymbolQuery(typed, UNIVERSE);
+    assert.equal(match.symbol, 'TCS', `typed: "${typed}"`);
+    assert.equal(match.matchedOn, 'name');
+  }
+
+  assert.equal(resolveSymbolQuery('infosys', UNIVERSE).symbol, 'INFY');
+  assert.equal(resolveSymbolQuery('Tata Motors', UNIVERSE).symbol, 'TATAMOTORS');
+});
+
+/**
+ * A ticker beats a name that merely contains the same letters. Someone typing
+ * "ITC" means ITC, and it happens to be its own name too - both routes have to
+ * agree, or the same input would resolve differently depending on which rule
+ * ran first.
+ */
+test('a ticker wins over a name, and ITC agrees with itself either way', () => {
+  const match = resolveSymbolQuery('itc', UNIVERSE);
+  assert.equal(match.symbol, 'ITC');
+  assert.equal(match.matchedOn, 'symbol');
+});
+
+/**
+ * "tata" is two companies. Guessing one would put the wrong stock on someone's
+ * watchlist, which is worse than asking - so it reports the candidates.
+ */
+test('an ambiguous name is reported, not guessed', () => {
+  assert.throws(
+    () => resolveSymbolQuery('tata', UNIVERSE),
+    (error) =>
+      error instanceof ValidationError &&
+      /TCS/.test(error.message) &&
+      /TATAMOTORS/.test(error.message),
+  );
+});
+
+test('a search with no result says so', () => {
+  // Not a company name and not ticker-shaped: nothing to resolve to.
+  assert.throws(() => resolveSymbolQuery('some company that does not exist', UNIVERSE), ValidationError);
+  assert.throws(() => resolveSymbolQuery('', UNIVERSE), ValidationError);
+  assert.throws(() => resolveSymbolQuery('   ', UNIVERSE), ValidationError);
+
+  /**
+   * But a ticker the source has not listed still passes through: `getSymbols`
+   * returns a handful of featured names while Yahoo knows thousands, and
+   * refusing everything unlisted would remove the ability to watch them.
+   */
+  const unlisted = resolveSymbolQuery('BAJAJ-AUTO', UNIVERSE);
+  assert.equal(unlisted.symbol, 'BAJAJ-AUTO');
+  assert.equal(unlisted.matchedOn, 'ticker');
+
+  // And canonicalisation still applies on that path.
+  assert.equal(resolveSymbolQuery('reliance.ns', UNIVERSE).symbol, 'RELIANCE');
+  assert.equal(resolveSymbolQuery('reliance.bo', UNIVERSE).symbol, 'RELIANCE.BO');
+});
+
+test('the real source universe is searchable by name', () => {
+  // Not a stand-in: the names the app actually ships with.
+  const universe = simulator.getSymbols();
+  assert.equal(resolveSymbolQuery('Tata Consultancy Services', universe).symbol, 'TCS');
+  assert.equal(resolveSymbolQuery('state bank', universe).symbol, 'SBIN');
+  assert.equal(resolveSymbolQuery('airtel', universe).symbol, 'BHARTIARTL');
+  assert.equal(resolveSymbolQuery('zomato', universe).symbol, 'ZOMATO');
 });
 
 test('BSE is a different venue and keeps its suffix', () => {

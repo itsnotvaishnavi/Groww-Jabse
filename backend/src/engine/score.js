@@ -163,9 +163,27 @@ export function levelFor(score, engine) {
  * formula, and silently rewriting it would break the published breakdown that
  * is supposed to reproduce it. Only the level is capped, and the caller is told.
  */
-export function applyLevelFloor({ level, features, engine }) {
-  if (level === Level.LOW) return { level, capped: false };
-
+/**
+ * "Did anything notable happen to THIS stock?"
+ *
+ * The floor's own test, named and reusable. It answers a narrower question
+ * than the score: not "how much does this matter" but "is there anything here
+ * at all besides the market's own movement".
+ *
+ * Volume is part of the test, and that is a deliberate reading of "on relative
+ * signals alone". Gating on the price z-score and the user-visible change ONLY
+ * would have suppressed the volume-spike case - a stock moving 0.4% on three
+ * times its normal turnover - which is the single most valuable thing this
+ * engine finds and the one an ordinary percentage-change watchlist always
+ * misses. Volume is a fact about THIS stock, not about the index, so heavy
+ * trading means something did happen here.
+ *
+ * Extracted so the presentation grouping can ask the same question with the
+ * same thresholds. A second copy of these three comparisons in the UI - or
+ * anywhere - would be a second definition of "notable", and this codebase has
+ * already paid for one of those.
+ */
+export function nothingNotableAbout({ features, engine }) {
   const price = features.priceAnomaly;
   const change = features.changeSinceViewed;
   const volume = features.volumeAnomaly;
@@ -174,34 +192,74 @@ export function applyLevelFloor({ level, features, engine }) {
   const changeMagnitude = change.available ? Math.abs(change.percent) : 0;
   const volumeRatio = volume.available ? volume.ratio : 1;
 
-  /**
-   * Volume is part of the test, and that is a deliberate reading of "on
-   * relative signals alone".
-   *
-   * Gating on the price z-score and the user-visible change ONLY would have
-   * suppressed the volume-spike case - a stock moving 0.4% on three times its
-   * normal turnover - which is the single most valuable thing this engine
-   * finds and the one an ordinary percentage-change watchlist always misses.
-   * Volume is a fact about THIS stock, not about the index, so heavy trading
-   * means something did happen here and the floor must not fire.
-   */
   const ownMoveNegligible = zMagnitude < engine.levelFloorMinZ;
   const userVisibleChangeNegligible = changeMagnitude < engine.levelFloorMinChangePct;
   const turnoverNegligible = volumeRatio < engine.levelFloorMinVolumeRatio;
 
-  if (ownMoveNegligible && userVisibleChangeNegligible && turnoverNegligible) {
+  return {
+    negligible: ownMoveNegligible && userVisibleChangeNegligible && turnoverNegligible,
+    zMagnitude: round(zMagnitude, 2),
+    changeMagnitude: round(changeMagnitude, 2),
+    volumeRatio: round(volumeRatio, 2),
+  };
+}
+
+export function applyLevelFloor({ level, features, engine }) {
+  if (level === Level.LOW) return { level, capped: false };
+
+  const { negligible, zMagnitude, changeMagnitude, volumeRatio } = nothingNotableAbout({
+    features,
+    engine,
+  });
+
+  if (negligible) {
     return {
       level: Level.LOW,
       capped: true,
       cappedFrom: level,
       reason: 'nothing_notable_about_this_stock',
-      zMagnitude: round(zMagnitude, 2),
-      changeMagnitude: round(changeMagnitude, 2),
-      volumeRatio: round(volumeRatio, 2),
+      zMagnitude,
+      changeMagnitude,
+      volumeRatio,
     };
   }
 
   return { level, capped: false };
+}
+
+/**
+ * Which of the three presentation groups a row belongs to.
+ *
+ * PRESENTATION ONLY, and computed here for exactly that reason: the mapping
+ * needs the level floor's thresholds, and the alternative is the browser
+ * re-deriving three comparisons against engine parameters. That would be a
+ * second scoring rule living in the client.
+ *
+ * This introduces no new level and no new threshold. `level` is untouched;
+ * every input is a value the engine already computed.
+ *
+ *   UNSEEN          - no baseline, so no comparison exists. Deliberately its
+ *                     own group: filing it under "stable" would be a claim
+ *                     about a measurement that was never made.
+ *   NEEDS_ATTENTION - the engine's existing attention bar, unchanged.
+ *   MEANINGFUL      - something notable happened to this stock, but it did not
+ *                     reach the bar. This is the group a percentage-change
+ *                     watchlist has no way to express.
+ *   STABLE          - the absence of a qualifying result, not a classification.
+ */
+export const AttentionGroup = {
+  UNSEEN: 'unseen',
+  NEEDS_ATTENTION: 'needs_attention',
+  MEANINGFUL: 'meaningful',
+  STABLE: 'stable',
+};
+
+export function attentionGroupFor({ level, features, engine }) {
+  if (!features.changeSinceViewed.available) return AttentionGroup.UNSEEN;
+  if (needsAttentionFor(level)) return AttentionGroup.NEEDS_ATTENTION;
+  return nothingNotableAbout({ features, engine }).negligible
+    ? AttentionGroup.STABLE
+    : AttentionGroup.MEANINGFUL;
 }
 
 /**

@@ -65,13 +65,19 @@
           <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2" />
           <path d="m16.5 16.5 4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
         </svg>
+        <!--
+          maxlength is 40, not a ticker's 18: company names are accepted here
+          and "Tata Consultancy Services" is 25 characters, so the old limit
+          silently truncated the very input the name search exists to handle.
+          The backend still decides what resolves to an instrument.
+        -->
         <input
           id="symbol-input"
           name="symbol"
           list="symbol-suggestions"
-          placeholder="Search or add a symbol…"
-          maxlength="18"
-          aria-label="Search or add a symbol to your watchlist"
+          placeholder="Search a symbol or company name…"
+          maxlength="40"
+          aria-label="Search or add a symbol or company name to your watchlist"
         />
         <datalist id="symbol-suggestions"></datalist>
         <kbd>Ctrl K</kbd>
@@ -127,6 +133,14 @@
               <option value="change">Biggest change</option>
               <option value="staleness">Least fresh</option>
             </select>
+            <!--
+              Moves the user's comparison baseline for every symbol to now. It
+              writes no snapshot: market history is append-only and stays
+              exactly as observed.
+            -->
+            <button type="button" class="chip chip--ghost" id="mark-all-seen">
+              Mark all as seen
+            </button>
             <button type="button" class="chip chip--ghost" id="refresh-now">Refresh</button>
           </div>
         </div>

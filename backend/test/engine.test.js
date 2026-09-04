@@ -486,6 +486,97 @@ test('adversarial histories never produce a non-finite number anywhere', () => {
   }
 });
 
+/**
+ * THE PRESENTATION GROUPS ARE A VIEW, NOT A SECOND ENGINE.
+ *
+ * Every assertion here is about which bucket a row is reported in. None of
+ * them may change a score or a level - that is the whole premise of the
+ * grouping, and the last assertion checks it directly.
+ */
+test('rows are grouped by the engine, and grouping changes no score', () => {
+  const { log, watchlist, engine } = harness();
+
+  // A big move on heavy volume: over the attention bar.
+  watchlist.add(USER, 'LOUD');
+  seed(log, 'LOUD', {
+    price: calmThenJump(100, 0.05),
+    volume: (i) => (i >= 148 ? 9_000 : 1_000),
+  });
+
+  // A calm stock, marked seen: measured, and nothing to report.
+  watchlist.add(USER, 'QUIET');
+  seed(log, 'QUIET', { price: calm(100) });
+
+  // Never marked seen: no baseline, so no comparison exists.
+  watchlist.add(USER, 'UNSEEN');
+  seed(log, 'UNSEEN', { price: calm(200) });
+
+  watchlist.markViewed(USER, 'LOUD', T0 - 30 * BAR);
+  watchlist.markViewed(USER, 'QUIET', T0 - 30 * BAR);
+
+  const evaluation = engine.evaluate({ userId: USER, now: T0 });
+  const group = (symbol) => itemFor(evaluation, symbol).attentionGroup;
+
+  assert.equal(group('LOUD'), 'needs_attention');
+  assert.equal(group('QUIET'), 'stable');
+
+  /**
+   * The one that matters most. A symbol with no baseline must never be filed
+   * as stable: "stable" reports a measurement, and for this row no measurement
+   * was made. Reporting it as stable would be the app inventing a comparison.
+   */
+  assert.equal(group('UNSEEN'), 'unseen');
+  assert.equal(itemFor(evaluation, 'UNSEEN').changeSinceViewed.available, false);
+
+  // Groups partition the watchlist: every row lands in exactly one.
+  const counts = {};
+  for (const item of evaluation.items) counts[item.attentionGroup] = 1 + (counts[item.attentionGroup] ?? 0);
+  assert.equal(
+    Object.values(counts).reduce((a, b) => a + b, 0),
+    evaluation.items.length,
+  );
+
+  // And the group agrees with the field the banner and chip already read.
+  for (const item of evaluation.items) {
+    assert.equal(
+      item.needsAttention,
+      item.attentionGroup === 'needs_attention',
+      `${item.symbol}: needsAttention and the group must not disagree`,
+    );
+  }
+});
+
+test('the meaningful group is real movement that did not reach the bar', () => {
+  const { log, watchlist, engine } = harness();
+
+  /**
+   * A move large enough that the level floor's "nothing notable" test does not
+   * fire, but not large enough to be scored MODERATE. This is the group an
+   * ordinary percentage-change watchlist cannot express, so it is asserted to
+   * exist rather than assumed.
+   */
+  watchlist.add(USER, 'MILD');
+  seed(log, 'MILD', { price: calmThenJump(100, 0.001) });
+  watchlist.markViewed(USER, 'MILD', T0 - 30 * BAR);
+
+  const item = itemFor(engine.evaluate({ userId: USER, now: T0 }), 'MILD');
+
+  assert.equal(item.needsAttention, false, 'below the attention bar');
+  assert.equal(item.level, Level.LOW);
+  assert.equal(item.attentionGroup, 'meaningful', 'but not nothing, so not stable');
+  assert.ok(item.meaningfulScore > 0, 'and it scored something');
+
+  /**
+   * The reason it is not stable: its own move is well clear of the floor's
+   * negligibility threshold. Asserted so the test fails loudly if the group
+   * ever starts being decided by something other than that test.
+   */
+  assert.ok(
+    Math.abs(item.features.priceAnomaly.z) > engine.params().levelFloorMinZ,
+    'the stock did move notably for itself',
+  );
+});
+
 test('levels are absolute, not a ranking within the watchlist', () => {
   const withOne = harness();
   withOne.watchlist.add(USER, 'STOCK');

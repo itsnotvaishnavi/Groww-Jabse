@@ -198,7 +198,22 @@ export function createIngestor({ source, snapshotLog, watchlist, intervalMs, aft
   }
 
   return {
-    stats: () => ({ ...stats, intervalMs, sourceInfo }),
+    /**
+     * `nextTickAt` is reported by the thing that owns the schedule.
+     *
+     * The loop is a fixed-interval `setInterval`, so the next fire really is
+     * one interval after the last one - this is the scheduler stating its own
+     * plan, not the UI guessing. It is null whenever the loop is not running
+     * (ingestion disabled, or stopped), because then there is no next tick and
+     * a client must not draw one.
+     */
+    stats: () => ({
+      ...stats,
+      intervalMs,
+      sourceInfo,
+      running: timer !== null,
+      nextTickAt: timer !== null && stats.lastTickAt !== null ? stats.lastTickAt + intervalMs : null,
+    }),
     tick,
     backfill,
 

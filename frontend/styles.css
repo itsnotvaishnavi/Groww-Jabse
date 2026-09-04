@@ -241,6 +241,9 @@ select {
   flex: none;
 }
 
+/* No uppercase transform: the field now takes company names as well as
+   tickers, and "TATA CONSULTANCY SERVICES" shouts at someone who typed it
+   properly. Matching was always case-insensitive, so nothing depended on it. */
 #symbol-input {
   flex: 1;
   min-width: 0;
@@ -248,12 +251,10 @@ select {
   background: none;
   outline: none;
   color: var(--text);
-  text-transform: uppercase;
 }
 
 #symbol-input::placeholder {
   color: var(--text-faint);
-  text-transform: none;
 }
 
 kbd {
@@ -821,6 +822,154 @@ select:focus-visible {
 .away__sym {
   font-weight: 650;
   min-width: 88px;
+}
+
+/* ---- ingestion heartbeat ---- */
+
+.beat {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 10px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-2xs);
+  color: var(--text-mid);
+  font-variant-numeric: tabular-nums;
+}
+
+.beat__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--live);
+  flex: none;
+}
+
+/* The one animation in the app, and it earns its place: a static "last sync"
+   cannot distinguish a live feed from a frozen page. Respects a reduced-motion
+   preference by simply not moving. */
+@media (prefers-reduced-motion: no-preference) {
+  .beat__dot--pulse {
+    animation: beat 2s ease-in-out infinite;
+  }
+}
+
+@keyframes beat {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+}
+
+.beat--off {
+  color: var(--text-dim);
+}
+
+.beat--off .beat__dot {
+  background: var(--nodata);
+}
+
+/* ---- attention groups: bands inside the watchlist table ---- */
+
+.wl__group td {
+  padding: 10px 18px 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-alt);
+}
+
+.wl__group-label {
+  font-size: var(--fs-3xs);
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.wl__group-count {
+  display: inline-block;
+  min-width: 17px;
+  margin-left: 7px;
+  padding: 1px 5px;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-3xs);
+  font-weight: 700;
+  text-align: center;
+  background: var(--border);
+  color: var(--text-mid);
+}
+
+.wl__group-note {
+  margin-left: 10px;
+  font-size: var(--fs-2xs);
+  color: var(--text-faint);
+}
+
+/* One colour per group, on the label and its count, so the band is scannable
+   without reading it. The palette is the freshness palette - already load
+   bearing in this UI - not a new one. */
+.wl__group--attention .wl__group-label {
+  color: var(--red);
+}
+.wl__group--attention .wl__group-count {
+  background: var(--red-tint);
+  color: var(--red);
+}
+
+.wl__group--meaningful .wl__group-label {
+  color: var(--delayed);
+}
+.wl__group--meaningful .wl__group-count {
+  background: #fdf1dc;
+  color: var(--delayed);
+}
+
+.wl__group--stable .wl__group-label {
+  color: var(--green);
+}
+.wl__group--stable .wl__group-count {
+  background: var(--green-tint);
+  color: var(--green);
+}
+
+.wl__group--unseen .wl__group-label {
+  color: var(--text-dim);
+}
+
+/* The caught-up state. Sits in the away panel's signal slot, because "nothing
+   to report" is an answer to the same question the signals answer. */
+.caught-up {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.caught-up__tick {
+  width: 26px;
+  height: 26px;
+  color: var(--green);
+  flex: none;
+}
+
+.caught-up__head {
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-weight: 650;
+}
+
+.caught-up__sub {
+  margin: 2px 0 0;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.caught-up .btn {
+  margin-left: auto;
 }
 
 .away__why {

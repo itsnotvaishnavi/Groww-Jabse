@@ -15,6 +15,7 @@ import { buildIntraday } from './intraday.js';
 import { scenarioCatalogue } from './demo/scenarios.js';
 import { computeDelta } from './delta.js';
 import { assessFreshness, detectConflict, isMarketOpen, lastMarketClose, nextMarketOpen } from './freshness.js';
+import { resolveSymbolQuery } from './symbols.js';
 import { ValidationError, normalizeSymbol } from './watchlist.js';
 
 /**
@@ -216,6 +217,12 @@ export function createApi({
         level: item.level,
         /** The one definition of attention-worthy; the UI chip reads this. */
         needsAttention: item.needsAttention,
+        /**
+         * Which presentation group the row belongs to. Published so the UI
+         * groups by reading a field rather than re-deriving the level floor's
+         * thresholds in the browser.
+         */
+        attentionGroup: item.attentionGroup,
         /** Set only when the level floor lowered the level. */
         levelFloor: item.levelFloor,
         confidence: item.confidence,
@@ -278,7 +285,16 @@ export function createApi({
    * honestly as "not enough observations yet" until the history lands.
    */
   router.post('/watchlist', (req, res) => {
-    const result = watchlist.add(config.devUserId, req.body?.symbol ?? '');
+    /**
+     * The typed text is resolved to an instrument before anything else sees
+     * it, so "tcs", "TCS" and "Tata Consultancy" all add the same row. The
+     * resolver throws a ValidationError for an ambiguous or unusable query,
+     * which the error handler already turns into a 400 the UI displays.
+     */
+    const resolved = resolveSymbolQuery(req.body?.symbol ?? '', source.getSymbols());
+    const result = watchlist.add(config.devUserId, resolved.symbol);
+    result.matchedOn = resolved.matchedOn;
+    result.name = resolved.name;
 
     if (result.added && ingestor) {
       void ingestor
@@ -303,6 +319,22 @@ export function createApi({
    * /watchlist: if fetching the list reset the baselines, the deltas would
    * vanish the instant they were rendered and could never be revisited.
    */
+  /**
+   * "Mark all as seen".
+   *
+   * Two segments, not three, deliberately. `/watchlist/all/viewed` would sit
+   * exactly where `/watchlist/:symbol/viewed` matches, and "ALL" and "MARK-ALL"
+   * are both legal tickers under the canonicaliser's character class - so a
+   * bulk action shaped like a symbol path could never be told apart from a real
+   * one. There is no POST at this depth to collide with.
+   *
+   * Like the per-symbol version this moves the user's comparison baseline and
+   * nothing else - no snapshot is written, updated or deleted.
+   */
+  router.post('/watchlist/viewed-all', (_req, res) => {
+    res.json(watchlist.markAllViewed(config.devUserId));
+  });
+
   router.post('/watchlist/:symbol/viewed', (req, res) => {
     const result = watchlist.markViewed(config.devUserId, req.params.symbol);
     if (!result.updated) {

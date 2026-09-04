@@ -27,6 +27,7 @@ const el = {
   chips: document.getElementById('chips'),
   sort: document.getElementById('sort-select'),
   refreshNow: document.getElementById('refresh-now'),
+  markAllSeen: document.getElementById('mark-all-seen'),
   tbody: document.getElementById('watchlist'),
   empty: document.getElementById('empty-state'),
   sectionSub: document.getElementById('section-sub'),
@@ -90,6 +91,21 @@ function clockIst(timestamp) {
     timeZone: 'Asia/Kolkata',
     hour: '2-digit',
     minute: '2-digit',
+    hour12: false,
+  });
+}
+
+/**
+ * The same clock, to the second. The ingestion heartbeat needs it: the poll
+ * runs every 15 seconds, so a minute-precision "last sync" would sit
+ * unchanged for four consecutive ticks and prove nothing about liveness.
+ */
+function clockIstSeconds(timestamp) {
+  return new Date(timestamp).toLocaleTimeString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
     hour12: false,
   });
 }
@@ -819,12 +835,52 @@ function renderStatus(payload) {
     <p class="card__note">${escapeHtml(marketLine)}</p>`;
 }
 
+/**
+ * The ingestion heartbeat.
+ *
+ * Purely presentational, and reads only what the ingestor reports about
+ * itself: `lastTickAt` is when a poll actually finished, `nextTickAt` is the
+ * scheduler stating when it fires next. Neither is invented here, and there is
+ * no timer in this file counting anything down - the line refreshes on the
+ * same five-second poll as everything else.
+ *
+ * Every state it can honestly be in is spelled out, because "the feed is
+ * paused" and "the feed is about to tick" must not look alike:
+ *   - not running        -> say so, and show no next time, because there isn't one
+ *   - running, no tick   -> booting, or backfilling before the loop starts
+ *   - running            -> last sync and next update
+ */
+function heartbeatLine(ingest) {
+  if (!ingest) {
+    return `<div class="beat beat--off"><span class="beat__dot"></span>
+      <span>Ingestion is disabled — prices will not update.</span></div>`;
+  }
+
+  if (!ingest.running) {
+    return `<div class="beat beat--off"><span class="beat__dot"></span>
+      <span>Ingestion paused${
+        ingest.lastTickAt ? ` · last sync ${clockIstSeconds(ingest.lastTickAt)}` : ''
+      }</span></div>`;
+  }
+
+  if (!ingest.lastTickAt) {
+    return `<div class="beat"><span class="beat__dot beat__dot--pulse"></span>
+      <span>Waiting for the first sync…</span></div>`;
+  }
+
+  return `<div class="beat"><span class="beat__dot beat__dot--pulse"></span>
+    <span>Last sync ${clockIstSeconds(ingest.lastTickAt)}${
+      ingest.nextTickAt ? ` · next ~${clockIstSeconds(ingest.nextTickAt)}` : ''
+    }</span></div>`;
+}
+
 function renderLogCard(meta) {
   if (!meta) return;
   const { log, ingest, config } = meta;
   const failing = Object.keys(ingest?.failingSymbols ?? {});
 
   el.logBody.innerHTML = `
+    ${heartbeatLine(ingest)}
     <div class="kv"><span class="kv__k">Observations</span><span class="kv__v">${log.snapshots.toLocaleString(
       'en-IN',
     )}</span></div>
@@ -851,6 +907,56 @@ function renderLogCard(meta) {
     </p>`;
 }
 
+/**
+ * The presentation groups, in the order a returning user wants them.
+ *
+ * `key` matches the engine's own `attentionGroup` field. Nothing here decides
+ * which group a row is in - that is computed once by the engine, from the same
+ * thresholds the level floor uses. This list only names them and says what
+ * each one means.
+ */
+const GROUPS = [
+  {
+    key: 'needs_attention',
+    label: 'Needs attention',
+    note: 'Scored at or above the engine’s attention bar.',
+    tone: 'attention',
+  },
+  {
+    key: 'meaningful',
+    label: 'Meaningful changes',
+    note: 'Something notable happened to this stock, but below the attention bar.',
+    tone: 'meaningful',
+  },
+  {
+    key: 'stable',
+    label: 'Stable',
+    note: 'Measured against your baseline, and nothing notable to report.',
+    tone: 'stable',
+  },
+  {
+    key: 'unseen',
+    label: 'No baseline yet',
+    /**
+     * Deliberately not folded into "Stable". Stable is a measurement; this is
+     * the absence of one. The wording covers both ways of having no baseline -
+     * never marked seen, and nothing new observed since you were.
+     */
+    note: 'Nothing to compare against yet — mark these seen to start tracking.',
+    tone: 'unseen',
+  },
+];
+
+function groupHeaderRow(group, count) {
+  return node(
+    `<tr class="wl__group wl__group--${group.tone}"><td colspan="5">
+       <span class="wl__group-label">${escapeHtml(group.label)}</span>
+       <span class="wl__group-count">${count}</span>
+       <span class="wl__group-note">${escapeHtml(group.note)}</span>
+     </td></tr>`,
+  );
+}
+
 function render(payload) {
   if (!payload) return;
   lastPayload = payload;
@@ -862,11 +968,37 @@ function render(payload) {
   const visible = sortItems(payload.items.filter(FILTERS[filter]), el.sort.value);
 
   const rows = [];
-  for (const item of visible) {
-    rows.push(renderRow(item));
+  const rowsFor = (item) => {
+    const out = [renderRow(item)];
     const conflict = conflictRow(item);
-    if (conflict) rows.push(conflict);
-    if (expanded.has(item.symbol)) rows.push(detailRow(item));
+    if (conflict) out.push(conflict);
+    if (expanded.has(item.symbol)) out.push(detailRow(item));
+    return out;
+  };
+
+  /**
+   * Grouping needs the engine's verdict. With the engine disabled the API
+   * serves the original ungrouped contract, and there is nothing to group by -
+   * so the list renders flat rather than silently dropping every row into a
+   * bucket that does not exist.
+   */
+  if (!visible.some((item) => item.attentionGroup)) {
+    for (const item of visible) rows.push(...rowsFor(item));
+  } else {
+    for (const group of GROUPS) {
+      const inGroup = visible.filter((item) => item.attentionGroup === group.key);
+
+      /**
+       * Empty groups are omitted rather than shown as empty bands. On a quiet
+       * watchlist three of the four are empty, and four headings over one row
+       * of data is furniture, not information - the counts are already on the
+       * chips, and "nothing outstanding" has its own caught-up state.
+       */
+      if (inGroup.length === 0) continue;
+
+      rows.push(groupHeaderRow(group, inGroup.length));
+      for (const item of inGroup) rows.push(...rowsFor(item));
+    }
   }
   el.tbody.replaceChildren(...rows);
 
@@ -973,6 +1105,37 @@ function renderAway(summary) {
           )}%</span> · ${escapeHtml(biggestMove.level)}</span></div>`);
     }
     el.awaySignals.innerHTML = parts.join('');
+    return;
+  }
+
+  /**
+   * Caught up: every symbol has a baseline, nothing has moved since it, and
+   * nothing wants attention. The engine decides this (summary.caughtUp) - the
+   * client only renders it, and re-renders it on the next poll, which is why
+   * it survives a refresh instead of being a toast that vanishes.
+   */
+  if (summary.caughtUp) {
+    el.awaySignals.innerHTML = `
+      <div class="caught-up">
+        <svg class="caught-up__tick" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" />
+          <path d="m7.5 12.5 3 3 6-6.5" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        <div>
+          <p class="caught-up__head">You're all caught up.</p>
+          <p class="caught-up__sub">Jabse will watch what changes next.</p>
+        </div>
+        <button type="button" class="btn" data-action="to-watchlist">Back to watchlist</button>
+      </div>`;
+
+    el.awaySignals
+      .querySelector('[data-action="to-watchlist"]')
+      .addEventListener('click', () => {
+        filter = 'all';
+        render(lastPayload); // re-syncs the filter chips, including the active one
+        document.querySelector('.section-head')?.scrollIntoView({ behavior: 'smooth' });
+      });
     return;
   }
 
@@ -1090,6 +1253,26 @@ el.chips.addEventListener('click', (event) => {
 });
 
 el.sort.addEventListener('change', () => render(lastPayload));
+
+/**
+ * "Mark all as seen" - one explicit user action, one baseline stamp.
+ *
+ * Disabled while in flight so a double click cannot send two stamps at two
+ * instants, and re-enabled in `finally` so a failure does not leave the
+ * control dead.
+ */
+el.markAllSeen.addEventListener('click', async () => {
+  el.markAllSeen.disabled = true;
+  try {
+    await api('/watchlist/viewed-all', { method: 'POST' });
+    await refresh();
+  } catch (error) {
+    el.formError.textContent = `Could not mark all as seen: ${error.message}`;
+    el.formError.hidden = false;
+  } finally {
+    el.markAllSeen.disabled = false;
+  }
+});
 
 el.refreshNow.addEventListener('click', async () => {
   await api('/ingest/tick', { method: 'POST' }).catch(() => {});

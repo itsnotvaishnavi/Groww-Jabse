@@ -158,6 +158,96 @@ test('a new symbol has no baseline until the user actually looks', () => {
   assert.equal(watchlist.markViewed('u1', 'MISSING').updated, false);
 });
 
+/**
+ * MARK ALL AS SEEN MOVES THE USER'S BASELINE, NOT MARKET HISTORY.
+ *
+ * This is the distinction the whole product rests on, so it is asserted rather
+ * than merely documented: the comparison point the user measures FROM moves,
+ * and every observation the app ever made stays exactly as observed.
+ */
+test('mark all as seen stamps every symbol at one instant', () => {
+  const { watchlist } = fresh();
+  for (const symbol of ['RELIANCE', 'TCS', 'INFY']) watchlist.add('u1', symbol);
+  watchlist.add('u2', 'RELIANCE');
+
+  const result = watchlist.markAllViewed('u1', T0);
+
+  assert.equal(result.updated, 3);
+  assert.deepEqual(result.symbols.sort(), ['INFY', 'RELIANCE', 'TCS']);
+
+  const stamps = watchlist.list('u1').map((e) => e.lastViewedAt);
+  assert.deepEqual(stamps, [T0, T0, T0], 'one instant for the whole watchlist, not three');
+
+  assert.equal(
+    watchlist.get('u2', 'RELIANCE').lastViewedAt,
+    null,
+    "another user's baseline is untouched",
+  );
+
+  // An empty watchlist is not an error, and reports that it changed nothing.
+  const empty = fresh();
+  assert.deepEqual(empty.watchlist.markAllViewed('nobody', T0), {
+    symbols: [],
+    lastViewedAt: T0,
+    updated: 0,
+  });
+});
+
+test('mark all as seen does not touch a single observation', () => {
+  const { log, watchlist } = fresh();
+  watchlist.add('u1', 'RELIANCE');
+  watchlist.add('u1', 'TCS');
+  log.append(snap({ symbol: 'RELIANCE', timestamp: T0, price: 1400 }));
+  log.append(snap({ symbol: 'RELIANCE', timestamp: T0 + 60_000, price: 1410 }));
+  log.append(snap({ symbol: 'TCS', timestamp: T0, price: 4000 }));
+
+  const before = log.history('RELIANCE').concat(log.history('TCS'));
+  const countBefore = log.stats().snapshots;
+
+  watchlist.markAllViewed('u1', T0 + 120_000);
+
+  assert.equal(log.stats().snapshots, countBefore, 'no snapshot added or removed');
+  assert.deepEqual(
+    log.history('RELIANCE').concat(log.history('TCS')),
+    before,
+    'every observation is byte-identical afterwards',
+  );
+});
+
+test('a new baseline is the point future change is measured from', () => {
+  const { log, watchlist } = fresh();
+  watchlist.add('u1', 'RELIANCE');
+  log.append(snap({ timestamp: T0, price: 1400 }));
+  log.append(snap({ timestamp: T0 + 60_000, price: 1500 }));
+
+  // Marked seen at the 1500 observation: the earlier 100-rupee rise is now
+  // history the user has acknowledged, not news.
+  watchlist.markAllViewed('u1', T0 + 60_000);
+  const viewedAt = watchlist.get('u1', 'RELIANCE').lastViewedAt;
+
+  const afterMark = computeDelta({
+    baseline: log.asOf('RELIANCE', viewedAt),
+    latest: log.latest('RELIANCE'),
+    lastViewedAt: viewedAt,
+  });
+  assert.equal(
+    afterMark.hasBaseline,
+    false,
+    'nothing new has been observed since the mark, which is not a change of zero',
+  );
+  assert.equal(afterMark.reason, NoBaselineReason.NO_NEW_OBSERVATION_SINCE_VIEW);
+
+  // The next observation is measured from the new baseline, not the old one.
+  log.append(snap({ timestamp: T0 + 120_000, price: 1515 }));
+  const next = computeDelta({
+    baseline: log.asOf('RELIANCE', viewedAt),
+    latest: log.latest('RELIANCE'),
+    lastViewedAt: viewedAt,
+  });
+  assert.equal(next.absolute, 15, 'measured from 1500, not from the original 1400');
+  assert.equal(next.percent, 1);
+});
+
 test('removing a symbol keeps its history for when it comes back', () => {
   const { log, watchlist } = fresh();
   watchlist.add('u1', 'RELIANCE');
@@ -427,6 +517,49 @@ function stubSource(behaviour = {}) {
     getSnapshotAt: behaviour.getSnapshotAt ?? (async (symbol, at) => snap({ symbol, timestamp: at })),
   };
 }
+
+/**
+ * The heartbeat's only real logic: the ingestor states when it will next
+ * poll, and states nothing when it has no plan to. The UI must never draw a
+ * countdown that is not backed by a running timer.
+ */
+test('the ingestor reports its own schedule, and null when it has none', async () => {
+  const { log, watchlist } = fresh();
+  watchlist.add('u1', 'RELIANCE');
+  const ingestor = createIngestor({
+    source: stubSource(),
+    snapshotLog: log,
+    watchlist,
+    intervalMs: 15_000,
+  });
+
+  const idle = ingestor.stats();
+  assert.equal(idle.running, false, 'not started');
+  assert.equal(idle.lastTickAt, null);
+  assert.equal(idle.nextTickAt, null, 'no timer means no next tick to promise');
+
+  // A manual tick records when it happened but starts no loop, so there is
+  // still no next tick to report.
+  await ingestor.tick();
+  const ticked = ingestor.stats();
+  assert.ok(ticked.lastTickAt > 0, 'a completed poll is recorded');
+  assert.equal(ticked.running, false);
+  assert.equal(ticked.nextTickAt, null, 'a one-off tick schedules nothing');
+
+  // Started: the next tick is exactly one interval after the last one.
+  ingestor.start();
+  const live = ingestor.stats();
+  assert.equal(live.running, true);
+  assert.equal(live.intervalMs, 15_000);
+  assert.equal(
+    live.nextTickAt,
+    live.lastTickAt + 15_000,
+    'one fixed interval after the last poll - the scheduler, not a guess',
+  );
+
+  ingestor.stop();
+  assert.equal(ingestor.stats().nextTickAt, null, 'stopping withdraws the promise');
+});
 
 test('one broken symbol does not stop the others', async () => {
   const { log, watchlist } = fresh();

@@ -144,6 +144,29 @@ export function createSummaryService({ engine, watchlist, surfacedStore, clock =
       },
 
       /**
+       * "You're all caught up" - a state, not a phrase.
+       *
+       * Computed here beside the counts it is made of, so the client asks
+       * rather than decides. It is deliberately strict: every symbol has a
+       * baseline, nothing has moved since those baselines, and nothing is
+       * asking for attention. Any one of those being false means there is
+       * still something to tell the user, and claiming otherwise would be the
+       * app looking tidy at the cost of being wrong.
+       *
+       * A symbol never marked seen blocks it, because "caught up" is a claim
+       * about a comparison, and for that symbol no comparison exists yet.
+       *
+       * Being derived from the counts rather than stored is what makes it
+       * survive a refresh: the next request recomputes it from the same
+       * baselines, so it persists exactly as long as it stays true.
+       */
+      caughtUp:
+        evaluation.items.length > 0 &&
+        unseen.length === 0 &&
+        changed.length === 0 &&
+        needsAttention.length === 0,
+
+      /**
        * One line, assembled server-side so the phrasing is deterministic and
        * testable rather than reassembled differently by every client.
        */
@@ -249,19 +272,33 @@ export function headlineFor({
     ? `You were away for ${duration}. Here is what mattered.`
     : `You were away for ${duration}.`;
 
+  /**
+   * "NOTHING NEEDS YOUR ATTENTION", NOT "NO MEANINGFUL CHANGES".
+   *
+   * This line used to read "no meaningful changes since you last checked",
+   * which was true of the attention bar and false of the screen underneath it:
+   * the watchlist groups rows into NEEDS ATTENTION / MEANINGFUL CHANGES /
+   * STABLE, so the banner could announce an absence while a band headed
+   * "MEANINGFUL CHANGES 4" sat directly below it.
+   *
+   * Two senses of "meaningful" in one view is the same bug the codebase
+   * already paid for with two senses of "needs attention". The banner reports
+   * the attention bar - which is what it actually counts - and "meaningful"
+   * now means exactly one thing in this product: the group below the bar.
+   */
   if (changed.length === 0) {
-    return `${lead} No meaningful changes since you last checked.`;
+    return `${lead} Nothing has changed since you last checked.`;
   }
 
   const thing = changed.length === 1 ? 'thing' : 'things';
 
   /**
-   * "Things moved but none of it mattered" is a genuine, useful answer and is
+   * "Things moved but none of it needs you" is a genuine, useful answer and is
    * phrased as one - it is the whole point of a tool that ranks meaningfulness
    * rather than magnitude. An empty panel would say the same thing worse.
    */
   if (needsAttention.length === 0) {
-    return `${lead} ${changed.length} ${thing} changed, but no meaningful changes since you last checked.`;
+    return `${lead} ${changed.length} ${thing} changed, but nothing needs your attention.`;
   }
 
   const attention = `${needsAttention.length} ${

@@ -30,6 +30,7 @@ import { buildReasons } from './reasons.js';
 import {
   Level,
   applyLevelFloor,
+  attentionGroupFor,
   confidenceFor,
   dataQualityFor,
   levelFor,
@@ -268,6 +269,13 @@ export function createEngine({
         level,
         /** ONE definition, read by the summary banner and the UI chip alike. */
         needsAttention: needsAttentionFor(level),
+        /**
+         * Which presentation group this row belongs to. Derived here, from
+         * values already computed above, so the UI groups rows by reading a
+         * field rather than re-deriving the level floor's thresholds in the
+         * browser. Adds no level and no threshold of its own.
+         */
+        attentionGroup: attentionGroupFor({ level, features, engine }),
         /**
          * Present only when the floor lowered the level, so the UI can explain
          * why a score of 0.44 is showing as LOW rather than looking broken.
