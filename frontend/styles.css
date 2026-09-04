@@ -984,6 +984,145 @@ select:focus-visible {
   color: #6b460b;
 }
 
+/* ================================= chart ================================= */
+
+.chart-slot {
+  margin-bottom: 14px;
+}
+
+.chart__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.chart__title {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+}
+
+.chart__ranges {
+  display: flex;
+  gap: 4px;
+}
+
+.chart__range {
+  padding: 4px 10px;
+  border-radius: 14px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg);
+  color: var(--text-dim);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.chart__range:hover {
+  background: var(--bg-alt);
+}
+
+.chart__range.is-active {
+  background: var(--green-tint);
+  border-color: var(--green);
+  color: var(--green);
+  font-weight: 600;
+}
+
+.chart {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+/* The region after the last-viewed marker: everything that happened while the
+   user was away. Faint on purpose - it frames the line, it does not compete. */
+.chart__away {
+  fill: var(--green);
+  opacity: 0.045;
+}
+
+.chart__marker {
+  stroke: var(--text-dim);
+  stroke-width: 1.25;
+  stroke-dasharray: 3 3;
+}
+
+.chart__marker-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  fill: var(--text-dim);
+}
+
+.chart__marker-dot {
+  fill: var(--bg);
+  stroke: var(--text-mid);
+  stroke-width: 1.75;
+}
+
+.chart__leader {
+  stroke: var(--border-strong);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+}
+
+.chart__extreme {
+  stroke: var(--bg);
+  stroke-width: 1.5;
+}
+
+.chart__extreme.up { fill: var(--green); }
+.chart__extreme.down { fill: var(--red); }
+
+.chart__price {
+  font-size: 11px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart__price.up { fill: var(--green); }
+.chart__price.down { fill: var(--red); }
+
+.chart__extreme-label {
+  font-size: 9.5px;
+  fill: var(--text-faint);
+  letter-spacing: 0.02em;
+}
+
+.chart__axis {
+  font-size: 10.5px;
+  fill: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.chart__change {
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart__change.up { fill: var(--green); }
+.chart__change.down { fill: var(--red); }
+.chart__change.flat { fill: var(--text-dim); }
+
+.chart__meta,
+.chart__empty {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: var(--text-faint);
+  line-height: 1.5;
+}
+
+.chart__empty {
+  padding: 18px 0;
+  text-align: center;
+}
+
 /* ============================== audit trail ============================== */
 
 .wl__audit > td {

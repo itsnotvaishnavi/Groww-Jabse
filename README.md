@@ -29,7 +29,7 @@ testable, and making it explainable is what this project is.**
 ```bash
 npm install
 npm start                 # http://localhost:3000
-npm test                  # 96 tests, no network / clock / filesystem
+npm test                  # 107 tests, no network / clock / filesystem
 npm run demo              # build the demo scenario and print it
 ```
 
@@ -119,6 +119,29 @@ level is capped, and the response carries `levelFloor` so the UI can say why a
 unreachable from relative signals alone — market and sector carry 0.20 each and
 neither can reach 1.0 — so the floor is the explicit guarantee and the
 arithmetic is the implicit one. Both are tested.
+
+### The chart
+
+Two ranges: **Since I checked** and **1D**. No 1W, no 1M, no 1Y — the row of
+calendar-period buttons every other price chart carries would dilute the single
+comparison this product makes, which is against your own last visit.
+
+It carries the **period high and low** for the selected range (with their
+timestamps, first occurrence winning a tie) and the **last-viewed marker**. On
+1D that marker is an interior dashed line with the region after it shaded:
+everything to its right happened while you were away. On "Since I checked" the
+visit *is* the left boundary, so it folds into the axis label rather than
+overlaying a line on the chart's edge and shading the entire plot.
+
+Honest details it does not paper over: a gap in the feed draws as a **break in
+the line**, never a straight join across an outage; the bar size respects the
+source's own cadence, so the grid is never finer than the data; a 1D window
+against a six-hour log draws the six hours it holds and says so; and fewer than
+three observations refuses to draw a line at all rather than implying a trend
+from two points.
+
+All of it is computed in `backend/src/chart.js` — the browser scales and
+positions, it does not decide what the high is or where the marker goes.
 
 ### One definition of "needs attention"
 
@@ -377,6 +400,7 @@ so the sharding boundary is a user.
 | `GET` | `/ready` | Readiness: per-symbol freshness, `503` if nothing is fresh |
 | `GET` | `/api/watchlist` | Scored, ranked, explained watchlist |
 | `GET` | `/api/summary` | "Since you were away" (`?awayMs=` dev override) |
+| `GET` | `/api/chart/:symbol` | Chart series (`?range=since_viewed\|1d`) |
 | `GET` | `/api/meta` | Source, config, engine parameters, pipeline health |
 | `GET` | `/api/sectors` | The static sector map |
 | `GET` | `/api/symbols` | Suggestion list |
@@ -422,6 +446,7 @@ backend/src/
   freshness.js        old vs stale, and source conflicts
   ingest.js           poll loop + boot backfill
   summary.js          "since you were away"
+  chart.js            the chart series: two ranges, high/low, marker
   api.js              HTTP surface
   engine/
     numeric.js        every arithmetic hazard, in one place
@@ -468,7 +493,7 @@ Everything lives in [config.js](backend/src/config.js); nothing else reads
 ## Tests
 
 ```bash
-npm test    # 96 tests
+npm test    # 107 tests
 ```
 
 No network, no filesystem, no uncontrolled clock — in-memory SQLite, stub
@@ -554,7 +579,7 @@ which is the shape a real conflict actually takes. Both are asserted in
 
 ## Deliberately out of scope
 
-Price charts, alerts, a notification centre, LLM integration, an intraday
+Alerts, a notification centre, LLM integration, an intraday
 analysis panel, stock discovery or recommendations, gamification,
 authentication, a chatbot, price prediction. Each would have cost P0 quality,
 and the scoring engine is the submission.

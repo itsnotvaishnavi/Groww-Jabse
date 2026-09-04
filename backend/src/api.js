@@ -7,6 +7,7 @@
  * a network.
  */
 import express from 'express';
+import { ChartRange, buildChart } from './chart.js';
 import { config } from './config.js';
 import { computeDelta } from './delta.js';
 import { assessFreshness, detectConflict, isMarketOpen, lastMarketClose, nextMarketOpen } from './freshness.js';
@@ -275,6 +276,36 @@ export function createApi({
       return res.status(404).json({ error: `${result.symbol} is not on the watchlist` });
     }
     return res.json(result);
+  });
+
+  /**
+   * The chart series for one symbol.
+   *
+   * Two ranges only - "since you checked" and 1D - because the comparison this
+   * product is making is against the user's own last visit, and a row of
+   * calendar-period buttons dilutes it. Everything the chart draws is computed
+   * here: the points, the period high and low, and the last-viewed marker.
+   */
+  router.get('/chart/:symbol', (req, res) => {
+    const symbol = normalizeSymbol(req.params.symbol);
+    const rangeKey = req.query.range ?? ChartRange.SINCE_VIEWED;
+
+    if (!Object.values(ChartRange).includes(rangeKey)) {
+      throw new ValidationError(
+        `range must be one of: ${Object.values(ChartRange).join(', ')}`,
+      );
+    }
+
+    res.json(
+      buildChart({
+        snapshotLog,
+        symbol,
+        entry: watchlist.get(config.devUserId, symbol),
+        rangeKey,
+        now: Date.now(),
+        engine: engine?.params(),
+      }),
+    );
   });
 
   /** Raw log for one symbol - the audit trail behind any number in the UI. */

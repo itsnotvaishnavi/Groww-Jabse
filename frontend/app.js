@@ -11,6 +11,8 @@
  * freshness state, and any row expands to the raw observations behind it.
  */
 
+import { createChart } from './chart.js';
+
 const POLL_INTERVAL_MS = 5_000;
 
 const el = {
@@ -220,34 +222,11 @@ function conflictRow(item) {
   </td></tr>`);
 }
 
-/** A dependency-free sparkline: the log is already an ordered series, so this
- *  is a polyline over normalised values. */
-function sparkline(snapshots) {
-  if (snapshots.length < 2) return '';
-
-  const series = [...snapshots].reverse(); // oldest first
-  const prices = series.map((s) => s.price);
-  const min = Math.min(...prices);
-  const max = Math.max(...prices);
-  const span = max - min || 1;
-
-  const points = series
-    .map((s, i) => {
-      const x = (i / (series.length - 1)) * 100;
-      const y = 100 - ((s.price - min) / span) * 100;
-      return `${x.toFixed(2)},${y.toFixed(2)}`;
-    })
-    .join(' ');
-
-  const rising = prices.at(-1) >= prices[0];
-  const color = rising ? 'var(--green)' : 'var(--red)';
-
-  return `<svg class="sparkline" viewBox="0 0 100 100" preserveAspectRatio="none"
-               role="img" aria-label="Recent price trend">
-    <polyline points="${points}" fill="none" stroke="${color}" stroke-width="1.5"
-              stroke-linejoin="round" vector-effect="non-scaling-stroke" />
-  </svg>`;
-}
+/**
+ * The chart lives in its own module and receives the formatters rather than
+ * importing them, so neither file depends on the other's internals.
+ */
+const chart = createChart({ api, inr, escapeHtml, directionClass, signed, duration });
 
 async function loadAudit(cell, symbol) {
   try {
@@ -263,7 +242,6 @@ async function loadAudit(cell, symbol) {
         <span>Every observation behind this price — nothing here is computed on the fly.</span>
         <span>${snapshots.length} shown, oldest ${ago(Date.now() - oldest.timestamp)}</span>
       </div>
-      ${sparkline(snapshots)}
       <div class="audit__scroll"><table>
         <thead>
           <tr>
@@ -575,10 +553,12 @@ function detailPanel(item) {
 function detailRow(item) {
   const row = node(
     `<tr class="wl__audit"><td colspan="5" class="audit">
+       <div class="chart-slot"></div>
        ${detailPanel(item)}
        <div class="audit__observations">Loading observations…</div>
      </td></tr>`,
   );
+  void chart.load(row.querySelector('.chart-slot'), item.symbol);
   void loadAudit(row.querySelector('.audit__observations'), item.symbol);
   return row;
 }
