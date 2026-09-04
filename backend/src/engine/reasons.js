@@ -34,6 +34,7 @@ export const ReasonCode = {
   SECTOR_OUTPERFORMANCE: 'sector_outperformance',
   SECTOR_UNDERPERFORMANCE: 'sector_underperformance',
   LOW_CONFIDENCE: 'low_confidence',
+  INSUFFICIENT_DATA: 'insufficient_data',
 };
 
 const signed = (n, digits = 1) => `${n > 0 ? '+' : ''}${n.toFixed(digits)}%`;
@@ -148,11 +149,24 @@ export function buildReasons({ features, scoreResult, confidence, engine }) {
   }
 
   /**
-   * A caveat, not a signal. If the score rests on thin or stale data the user
-   * is told, because a confident-looking row built on twenty samples of a
-   * delayed feed is the kind of thing that erodes trust once noticed.
+   * Nothing was measurable at all - a brand-new symbol, or one whose feed has
+   * barely spoken. This is a different statement from "we measured and are not
+   * confident", and it gets its own wording: "treat with caution" on a row with
+   * no signal implies there is something to be cautious ABOUT, when in fact
+   * there is simply nothing there yet.
    */
-  if (confidence < 0.5) {
+  if (scoreResult.availableWeight === 0) {
+    push(
+      ReasonCode.INSUFFICIENT_DATA,
+      'Not enough observations yet to assess this',
+      Number.NEGATIVE_INFINITY,
+    );
+  } else if (confidence < 0.5) {
+    /**
+     * A caveat, not a signal. If the score rests on thin or stale data the user
+     * is told, because a confident-looking row built on twenty samples of a
+     * delayed feed is the kind of thing that erodes trust once noticed.
+     */
     push(
       ReasonCode.LOW_CONFIDENCE,
       'Based on limited or delayed data — treat with caution',

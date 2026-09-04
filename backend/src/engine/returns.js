@@ -179,6 +179,17 @@ export function volumeRatio(bars, { minReturns }) {
   const latest = present[present.length - 1];
   const trailing = present.slice(0, -1).map((bar) => bar.volume);
 
+  /**
+   * The same minimum as the price anomaly, for the same reason and for
+   * consistency: "today's volume is 3x the average" computed from a
+   * three-observation average is not a finding. Reporting it as available with
+   * zero confidence would be worse than declining - it would contribute its
+   * full 0.25 of the weight while deserving none of it.
+   */
+  if (trailing.length < minReturns) {
+    return { available: false, reason: 'insufficient_history', sampleSize: trailing.length };
+  }
+
   if (trailing.every((v) => v === 0) && latest.volume === 0) {
     return { available: false, reason: 'volume_not_reported', sampleSize: trailing.length };
   }
