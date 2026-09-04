@@ -37,7 +37,29 @@ export const ReasonCode = {
   INSUFFICIENT_DATA: 'insufficient_data',
 };
 
-const signed = (n, digits = 1) => `${n > 0 ? '+' : ''}${n.toFixed(digits)}%`;
+/**
+ * A signed percentage that never contradicts itself.
+ *
+ * `(-0.04).toFixed(1)` is `"-0.0"`, and "-0.0% since you last checked" reads
+ * as a bug rather than a number: it attaches a direction to a magnitude of
+ * zero. The reason only exists because the value is non-zero, so precision is
+ * borrowed until the magnitude survives rounding. Past `maxDigits` the number
+ * is genuinely below anything worth printing and is reported as a bound.
+ */
+const signed = (n, digits = 1, maxDigits = 4) => {
+  const sign = n > 0 ? '+' : n < 0 ? '-' : '';
+  const magnitude = Math.abs(n);
+
+  let places = digits;
+  while (places < maxDigits && magnitude > 0 && Number(magnitude.toFixed(places)) === 0) {
+    places += 1;
+  }
+
+  if (magnitude > 0 && Number(magnitude.toFixed(places)) === 0) {
+    return `${sign}<${(10 ** -places).toFixed(places)}%`;
+  }
+  return `${sign}${magnitude.toFixed(places)}%`;
+};
 
 /** Minutes, for phrasing a horizon in words a person uses. */
 function horizonWords(ms) {

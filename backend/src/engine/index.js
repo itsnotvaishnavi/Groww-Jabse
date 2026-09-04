@@ -166,6 +166,18 @@ export function createEngine({
       );
     }
 
+    /**
+     * The newest observation for every symbol in ONE query.
+     *
+     * This loop used to call `latest(symbol)` per row - a textbook N+1 sitting
+     * next to a batched method that already existed and was already tested.
+     * `asOf` is deliberately left per-symbol: each row asks about a different
+     * instant (its own last_viewed_at), so there is no single query to batch it
+     * into without a UNION, and correctness of the baseline matters more here
+     * than one query per row.
+     */
+    const latestBySymbol = snapshotLog.latestForSymbols(allSymbols);
+
     const benchmarkBars = barsBySymbol.get(engine.benchmarkSymbol) ?? [];
     const surfacedFingerprints = surfacedStore
       ? surfacedStore.fingerprintsFor(userId)
@@ -182,7 +194,7 @@ export function createEngine({
        * resampled construct, and the price shown to the user must be an actual
        * recorded observation with its own timestamp, source and confidence.
        */
-      const latest = snapshotLog.latest(symbol);
+      const latest = latestBySymbol.get(symbol) ?? null;
       const baseline =
         entry.lastViewedAt == null ? null : snapshotLog.asOf(symbol, entry.lastViewedAt);
 
@@ -310,7 +322,7 @@ export function createEngine({
        */
       benchmark: {
         symbol: engine.benchmarkSymbol,
-        latest: snapshotLog.latest(engine.benchmarkSymbol),
+        latest: latestBySymbol.get(engine.benchmarkSymbol) ?? null,
         bars: benchmarkBars.filter(Boolean).length,
         returnPct: (() => {
           const spanBars = Math.max(1, Math.round(engine.anomalyHorizonMs / engine.barMs));

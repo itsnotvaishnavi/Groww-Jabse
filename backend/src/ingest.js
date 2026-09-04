@@ -114,6 +114,20 @@ export function createIngestor({ source, snapshotLog, watchlist, intervalMs, aft
           stats.lastError = { symbol: null, message: `afterTick: ${error.message}`, at: Date.now() };
         }
       }
+    } catch (error) {
+      /**
+       * A tick-level failure, as opposed to a per-symbol one: the only
+       * remaining candidate is symbolsToPoll(), which reads the database.
+       *
+       * This exists because the loop is driven by `setInterval(() => void
+       * tick())`, so a rejection here is an unhandled rejection and Node ends
+       * the process for it - killing the server because one read failed, and
+       * without the ordered shutdown that closes the database. The module
+       * already holds that one broken symbol must not stop the others; one
+       * broken tick must not stop the loop either. It is recorded rather than
+       * swallowed, and /api/meta reports it.
+       */
+      recordFailure('__tick__', error);
     } finally {
       running = false;
       stats.ticks += 1;

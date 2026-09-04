@@ -25,6 +25,20 @@ import { ValidationError, normalizeSymbol } from './watchlist.js';
 const asyncHandler = (handler) => (req, res, next) =>
   Promise.resolve(handler(req, res, next)).catch(next);
 
+/**
+ * A row limit that cannot become unbounded.
+ *
+ * `Number(req.query.limit) || fallback` looked safe and was not: SQLite treats
+ * a NEGATIVE limit as no limit at all, and -1 is truthy, so `?limit=-1` slipped
+ * past the fallback and returned every row a symbol had. Floors at 1, caps at
+ * `max`, and falls back for anything non-numeric.
+ */
+function boundedLimit(raw, fallback, max) {
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 1) return fallback;
+  return Math.min(Math.floor(value), max);
+}
+
 export function createApi({
   snapshotLog,
   watchlist,
@@ -416,7 +430,7 @@ export function createApi({
   router.get('/alerts/events', (req, res) => {
     if (!alertStore) return res.status(503).json({ error: 'alerts are disabled' });
 
-    const limit = Math.min(Number(req.query.limit) || config.alerts.feedLimit, 200);
+    const limit = boundedLimit(req.query.limit, config.alerts.feedLimit, 200);
     res.json({
       events: alertStore.events(config.devUserId, limit),
       unacknowledged: alertStore.unacknowledgedCount(config.devUserId),
@@ -481,7 +495,7 @@ export function createApi({
   /** Raw log for one symbol - the audit trail behind any number in the UI. */
   router.get('/snapshots/:symbol', (req, res) => {
     const symbol = normalizeSymbol(req.params.symbol);
-    const limit = Math.min(Number(req.query.limit) || 100, 1000);
+    const limit = boundedLimit(req.query.limit, 100, 1000);
     res.json({
       symbol,
       limit,

@@ -147,7 +147,14 @@ export function createSummaryService({ engine, watchlist, surfacedStore, clock =
        * One line, assembled server-side so the phrasing is deterministic and
        * testable rather than reassembled differently by every client.
        */
-      headline: headlineFor({ away, changed, needsAttention, unseen, isLongAbsence }),
+      headline: headlineFor({
+        away,
+        changed,
+        needsAttention,
+        unseen,
+        isLongAbsence,
+        watched: evaluation.items.length,
+      }),
 
       /** The signals themselves, engine-ranked and truncated. */
       top: top.map((item) => ({
@@ -212,7 +219,25 @@ function biggestMove(changed) {
  * never advises, predicts, or names an action - the product has no view on what
  * anyone should do with their money, and its language must not imply one.
  */
-export function headlineFor({ away, changed, needsAttention, unseen, isLongAbsence }) {
+export function headlineFor({
+  away,
+  changed,
+  needsAttention,
+  unseen,
+  isLongAbsence,
+  watched = null,
+}) {
+  /**
+   * An empty watchlist, handled first.
+   *
+   * Without this the first-visit branch below counted its way to "First look at
+   * these 0 symbols - mark them seen to start tracking what changes", which is
+   * nonsense addressed to nobody. An empty state should say what to do next.
+   */
+  if (watched === 0) {
+    return 'Your watchlist is empty. Add a symbol above and Jabse will track what changes while you are away.';
+  }
+
   if (away.firstVisit) {
     return unseen.length === 1
       ? 'First look at this symbol — mark it seen to start tracking what changes.'
@@ -225,14 +250,23 @@ export function headlineFor({ away, changed, needsAttention, unseen, isLongAbsen
     : `You were away for ${duration}.`;
 
   if (changed.length === 0) {
-    return `${lead} Nothing on your watchlist changed.`;
+    return `${lead} No meaningful changes since you last checked.`;
   }
 
   const thing = changed.length === 1 ? 'thing' : 'things';
-  const attention =
-    needsAttention.length === 0
-      ? 'None of it needs your attention.'
-      : `${needsAttention.length} ${needsAttention.length === 1 ? 'deserves' : 'deserve'} your attention.`;
+
+  /**
+   * "Things moved but none of it mattered" is a genuine, useful answer and is
+   * phrased as one - it is the whole point of a tool that ranks meaningfulness
+   * rather than magnitude. An empty panel would say the same thing worse.
+   */
+  if (needsAttention.length === 0) {
+    return `${lead} ${changed.length} ${thing} changed, but no meaningful changes since you last checked.`;
+  }
+
+  const attention = `${needsAttention.length} ${
+    needsAttention.length === 1 ? 'deserves' : 'deserve'
+  } your attention.`;
 
   return `${lead} ${changed.length} ${thing} changed. ${attention}`;
 }

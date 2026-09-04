@@ -196,7 +196,47 @@ test('nothing changed is stated plainly rather than padded', () => {
   const summary = summaryService.build({ userId: USER, record: false });
 
   assert.equal(summary.counts.changed, 0);
-  assert.match(summary.headline, /Nothing on your watchlist changed/);
+  /**
+   * Wording updated in the polish pass: "no meaningful changes since you last
+   * checked" says the same thing in the product's own terms, and matches the
+   * phrasing used when things DID move but none of it mattered.
+   */
+  assert.match(summary.headline, /No meaningful changes since you last checked/);
+});
+
+test('an empty watchlist says what to do next, not "these 0 symbols"', () => {
+  const { summaryService } = harness();
+
+  const summary = summaryService.build({ userId: USER, record: false });
+
+  /**
+   * The first-visit branch used to count its way to "First look at these 0
+   * symbols - mark them seen to start tracking what changes": a sentence
+   * addressed to nobody about nothing.
+   */
+  assert.equal(summary.counts.watched, 0);
+  assert.match(summary.headline, /watchlist is empty/i);
+  assert.match(summary.headline, /Add a symbol/i);
+  assert.ok(!summary.headline.includes('0 symbols'));
+});
+
+test('things moving without mattering is its own answer', () => {
+  const { log, watchlist, summaryService } = harness();
+  watchlist.add(USER, 'DRIFTER');
+  /**
+   * A real but unremarkable move, placed AFTER the visit at bar 120 - a step at
+   * bar 100 would sit before it and leave nothing to diff, which is what the
+   * first version of this test got wrong.
+   */
+  seed(log, 'DRIFTER', { price: (i) => (i < 135 ? 100 : 100.05) });
+  seed(log, BENCHMARK_SYMBOL, { price: calm(20_000) });
+  watchlist.markViewed(USER, 'DRIFTER', T0 - 30 * 60_000);
+
+  const summary = summaryService.build({ userId: USER, record: false });
+
+  assert.ok(summary.counts.changed >= 1, 'something did change');
+  assert.equal(summary.counts.needsAttention, 0, 'but none of it is meaningful');
+  assert.match(summary.headline, /changed, but no meaningful changes/);
 });
 
 test('the summary never gives advice or predicts a price', () => {

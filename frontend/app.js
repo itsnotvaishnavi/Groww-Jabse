@@ -76,6 +76,24 @@ function ago(ms) {
 
 const duration = (ms) => ago(ms).replace(' ago', '');
 
+/**
+ * IST, 24-hour, no date. Every timestamp in this app is Indian market time
+ * whatever the browser's locale says, because "13:34" meaning two different
+ * instants on two machines would make the audit trail unusable.
+ *
+ * This one had been written out twice - privately in chart.js and inline in
+ * observedAt below - so the chart and the row could have disagreed about how
+ * to render the same instant.
+ */
+function clockIst(timestamp) {
+  return new Date(timestamp).toLocaleTimeString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
+
 function whenIst(timestamp) {
   return new Date(timestamp).toLocaleString('en-IN', {
     timeZone: 'Asia/Kolkata',
@@ -229,7 +247,7 @@ function conflictRow(item) {
  * The chart lives in its own module and receives the formatters rather than
  * importing them, so neither file depends on the other's internals.
  */
-const chart = createChart({ api, inr, escapeHtml, directionClass, signed, duration });
+const chart = createChart({ api, inr, escapeHtml, directionClass, signed, duration, clockIst });
 
 /** Intraday analysis and alerts, same dependency-injection arrangement. */
 const panels = createPanels({
@@ -303,14 +321,7 @@ function observedAt(timestamp) {
     new Date(timestamp).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) ===
     new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
 
-  return sameIstDay
-    ? new Date(timestamp).toLocaleTimeString('en-IN', {
-        timeZone: 'Asia/Kolkata',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false,
-      })
-    : whenIst(timestamp);
+  return sameIstDay ? clockIst(timestamp) : whenIst(timestamp);
 }
 
 /** Reason codes that are caveats about our data rather than market findings. */
@@ -409,12 +420,20 @@ function renderRow(item) {
   row.querySelector('[data-action="remove"]').addEventListener('click', async () => {
     await api(`/watchlist/${encodeURIComponent(item.symbol)}`, { method: 'DELETE' });
     expanded.delete(item.symbol);
+    panelSlots.delete(item.symbol);
     await refresh();
   });
 
   row.querySelector('[data-action="expand"]').addEventListener('click', () => {
-    if (expanded.has(item.symbol)) expanded.delete(item.symbol);
-    else expanded.add(item.symbol);
+    if (expanded.has(item.symbol)) {
+      expanded.delete(item.symbol);
+      // Collapsing is the user closing the row, so its panels are discarded
+      // rather than held: reopening should be a clean slate, and the map must
+      // not accumulate detached nodes for every row ever opened.
+      panelSlots.delete(item.symbol);
+    } else {
+      expanded.add(item.symbol);
+    }
     render(lastPayload);
   });
 
@@ -565,6 +584,37 @@ function detailPanel(item) {
   </div>`;
 }
 
+/**
+ * The intraday and alert panels, held across re-renders by symbol.
+ *
+ * The poll rebuilds every visible row every five seconds, which is right for
+ * the numbers - a stale score sitting under a fresh price would be worse - but
+ * it was rebuilding these two panels along with them. So a panel opened at
+ * t+0 closed itself at t+5, and a threshold half-typed into the alert form was
+ * destroyed before it could be submitted: the refresh loop racing the user, and
+ * the alert form was effectively unusable in the live app.
+ *
+ * The panels are the one part of the row that is loaded on demand and never
+ * auto-refreshed, so the fix is to move the *same DOM nodes* into each newly
+ * rendered row rather than build empty ones. Open state, scroll position and
+ * form values all come with them, while the score, the breakdown and the audit
+ * table above still refresh on every poll. Same intent as `expanded` above,
+ * one level deeper.
+ */
+const panelSlots = new Map();
+
+function slotsFor(symbol) {
+  let slots = panelSlots.get(symbol);
+  if (!slots) {
+    slots = {
+      intraday: node('<div class="intraday-slot" hidden></div>'),
+      alert: node('<div class="alert-slot" hidden></div>'),
+    };
+    panelSlots.set(symbol, slots);
+  }
+  return slots;
+}
+
 function detailRow(item) {
   const row = node(
     `<tr class="wl__audit"><td colspan="5" class="audit">
@@ -573,12 +623,15 @@ function detailRow(item) {
          <button type="button" class="btn" data-action="intraday">Analyze Intraday</button>
          <button type="button" class="btn" data-action="alert">Set Alert</button>
        </div>
-       <div class="intraday-slot" hidden></div>
-       <div class="alert-slot" hidden></div>
+       <div class="panel-slots"></div>
        ${detailPanel(item)}
        <div class="audit__observations">Loading observations…</div>
      </td></tr>`,
   );
+
+  const slots = slotsFor(item.symbol);
+  row.querySelector('.panel-slots').append(slots.intraday, slots.alert);
+
   void chart.load(row.querySelector('.chart-slot'), item.symbol);
   void loadAudit(row.querySelector('.audit__observations'), item.symbol);
 
@@ -588,21 +641,23 @@ function detailRow(item) {
    * for them on every expand - and on every five-second poll that re-renders an
    * expanded row - would be waste for a panel most users will not open.
    */
-  const intradaySlot = row.querySelector('.intraday-slot');
-  row.querySelector('[data-action="intraday"]').addEventListener('click', (event) => {
-    const open = intradaySlot.hidden;
-    intradaySlot.hidden = !open;
+  const intradayButton = row.querySelector('[data-action="intraday"]');
+  intradayButton.classList.toggle('is-active', !slots.intraday.hidden);
+  intradayButton.addEventListener('click', (event) => {
+    const open = slots.intraday.hidden;
+    slots.intraday.hidden = !open;
     event.currentTarget.classList.toggle('is-active', open);
-    if (open) void panels.loadIntraday(intradaySlot, item.symbol);
+    if (open) void panels.loadIntraday(slots.intraday, item.symbol);
   });
 
-  const alertSlot = row.querySelector('.alert-slot');
-  row.querySelector('[data-action="alert"]').addEventListener('click', (event) => {
-    const open = alertSlot.hidden;
-    alertSlot.hidden = !open;
+  const alertButton = row.querySelector('[data-action="alert"]');
+  alertButton.classList.toggle('is-active', !slots.alert.hidden);
+  alertButton.addEventListener('click', (event) => {
+    const open = slots.alert.hidden;
+    slots.alert.hidden = !open;
     event.currentTarget.classList.toggle('is-active', open);
     if (open) {
-      void panels.loadAlerts(alertSlot, item.symbol, () =>
+      void panels.loadAlerts(slots.alert, item.symbol, () =>
         panels.loadAlertFeed(el.alertFeed),
       );
     }

@@ -5,49 +5,56 @@
 A watchlist that answers **"what has meaningfully changed *since I last looked*"**
 rather than "what moved today".
 
-Built for Groww "Code" — solo build, Sep 4–7 2026.
+Built for Groww "Code" — solo build, Sep 4–7 2026. Two runtime dependencies,
+no build step, no API keys.
+
+**Run it:** `npm install && npm start` → <http://localhost:3000>. Full setup in
+[Setup](#setup).
 
 ---
 
-## The idea
+## Contents
 
-The name is the whole thesis. Every watchlist app shows the same thing: today's
-percentage change. But "today" is an arbitrary window that has nothing to do
-with you. If you last checked on Tuesday, a flat Friday tells you nothing about
-the 4% round trip you missed.
+[The problem](#the-problem) · [The engine](#the-engine) ·
+[Data engineering](#data-engineering) · [Product surface](#product-surface) ·
+[Setup](#setup) · [Architecture](#architecture) ·
+[Decisions](#decisions-and-why) · [Scalability](#scalability) ·
+[Limitations](#known-limitations-stated-rather-than-hidden)
 
-*Jab se* — since when? Since **you** last looked.
+---
 
-And "moved a lot" is not the same as "matters". A 0.4% move is unremarkable for
+## The problem
+
+Every watchlist shows the same number: today's percentage change. Three things
+are wrong with it.
+
+**"Today" is an arbitrary window that has nothing to do with you.** If you last
+checked on Tuesday, a flat Friday tells you nothing about the 4% round trip you
+missed. The window that matters is the one bounded by your own last visit, and
+no product measures it.
+
+**"Moved a lot" is not the same as "matters".** A 0.4% move is unremarkable for
 ZOMATO and remarkable for HDFCBANK. A 2% rise when the whole market rose 2% is
 not news about your stock. A 1% move on four times the usual volume often
-matters more than a 3% move on a quiet tape. **Defining "meaningful", making it
-testable, and making it explainable is what this project is.**
+matters more than a 3% move on a quiet tape. Sorting by magnitude reliably
+surfaces the most volatile stock having an ordinary day and buries the placid
+one doing something genuinely unusual.
 
-## Run it
+**A system that flags things must be able to say why it did not.** "You weren't
+alerted" is unauditable unless the app can produce the number that failed the
+rule. Most can't, because the explanation is written by hand and drifts from the
+code that decides.
 
-```bash
-npm install
-npm start                 # http://localhost:3000
-npm test                  # 189 tests, no network / clock / filesystem
-npm run demo              # the full fixture
-npm run demo -- stock_outperforms 24h   # a named scenario
-```
-
-Requires Node 22+ (developed on 24). No API keys, no configuration, no
-migration step.
-
-```bash
-DATA_SOURCE=yahoo npm start                          # real NSE/BSE prices
-curl 'localhost:3000/api/summary?awayMs=180000000'   # simulate a 50h absence
-```
+So: **defining "meaningful", making it testable, and making it explainable** is
+what this project is. The name is the thesis — *jab se*, since when? Since
+**you** last looked.
 
 ---
 
-## What "meaningful change" means here
+## The engine
 
 Four signals, each measured independently, each able to say "I could not
-measure this". Weights are config, not constants.
+measure this". Weights are configuration, not constants.
 
 | Signal | Weight | The question it answers |
 |---|---|---|
@@ -56,11 +63,13 @@ measure this". Weights are config, not constants.
 | **Market-relative** | 0.20 | Did it move more than the market? |
 | **Sector-relative** | 0.20 | Did it move more than its peers? |
 
-Plus **change since you last looked**, which is not one of the scored signals —
-it is the user's own frame of reference and the thing they came back to find out.
+Plus **change since you last looked**, which is deliberately *not* one of the
+scored signals — it is the user's own frame of reference and the thing they came
+back to find out, so it leads every explanation and is never averaged into a
+score.
 
 ```
-score = Σ(weight × contribution) / Σ(weight of available signals)
+score = Σ(weight × contribution) ÷ Σ(weight of available signals)
 ```
 
 ### Renormalisation is the important part
@@ -68,13 +77,13 @@ score = Σ(weight × contribution) / Σ(weight of available signals)
 If the sector signal is unavailable, the weighted sum is divided by **0.80**,
 not 1.00. Dividing by 1.00 would treat "we could not measure the sector" as
 "the sector said nothing was happening" — silently capping every unsectored
-stock at 80% of the score it earns. There is a test that recomputes the score
-from the published breakdown and a test asserting each missing signal removes
-exactly its own weight.
+stock at 80% of the score it earns. One test recomputes the score from the
+published breakdown; another asserts each missing signal removes exactly its own
+weight and nothing else.
 
 **Missing is never zero.** Absent volume is *unavailable*, not a collapse in
-trading activity. A never-viewed symbol has *no baseline*, not a 0% change. Each
-feature carries `available`, a machine-readable `reason`, and its own
+trading activity. A never-viewed symbol has *no baseline*, not a 0% change.
+Every feature carries `available`, a machine-readable `reason`, and its own
 `confidence`.
 
 ### Levels
@@ -104,8 +113,8 @@ half-contribution point, which makes it a meaningful thing to configure.
 Relative signals **alone** cannot carry a symbol above `LOW`. If a stock's own
 move is unremarkable, its turnover is normal, *and* you have seen nothing change
 since your last visit, then whatever the index did, nothing much happened to
-**your** stock — and calling that attention-worthy would be the engine
-mistaking context for news.
+**your** stock — and calling that attention-worthy would be the engine mistaking
+context for news.
 
 Turnover is part of that test deliberately. Gating only on the price z-score and
 the change would have suppressed the volume-spike case — a 0.4% move on three
@@ -113,197 +122,13 @@ times normal volume — which is the most valuable thing this engine finds and t
 one a percentage-change watchlist always misses. Volume is a fact about *this*
 stock, not about the index.
 
-The score is **not** rewritten when the floor applies: it stays the honest
-output of the formula, so the published breakdown still reproduces it. Only the
-level is capped, and the response carries `levelFloor` so the UI can say why a
-0.44 is showing as `LOW`. As it happens the default weights make this
-unreachable from relative signals alone — market and sector carry 0.20 each and
-neither can reach 1.0 — so the floor is the explicit guarantee and the
-arithmetic is the implicit one. Both are tested.
-
-### The chart
-
-Two ranges: **Since I checked** and **1D**. No 1W, no 1M, no 1Y — the row of
-calendar-period buttons every other price chart carries would dilute the single
-comparison this product makes, which is against your own last visit.
-
-It carries the **period high and low** for the selected range (with their
-timestamps, first occurrence winning a tie) and the **last-viewed marker**. On
-1D that marker is an interior dashed line with the region after it shaded:
-everything to its right happened while you were away. On "Since I checked" the
-visit *is* the left boundary, so it folds into the axis label rather than
-overlaying a line on the chart's edge and shading the entire plot.
-
-Honest details it does not paper over: a gap in the feed draws as a **break in
-the line**, never a straight join across an outage; the bar size respects the
-source's own cadence, so the grid is never finer than the data; a 1D window
-against a six-hour log draws the six hours it holds and says so; and fewer than
-three observations refuses to draw a line at all rather than implying a trend
-from two points.
-
-All of it is computed in `backend/src/chart.js` — the browser scales and
-positions, it does not decide what the high is or where the marker goes.
-
-### Intraday analysis
-
-An "Analyze Intraday" action on the expanded row. Deterministic rolling
-statistics, no model and no forecast: current price, window high and low with
-their timestamps, window return, volatility, volume against normal, movement
-against the market and against sector peers.
-
-**The window is named before any number is shown, and nothing borrows across
-windows.** The app already answers three different questions over three
-different horizons — since you last looked (per-user), 1D (the chart), and the
-session (this panel). A session high quietly sourced from the 1D range would be
-a lie that looks exactly like a fact, so every figure here is recomputed from
-the session window alone and anything the session cannot support reports
-`unavailable` with a reason. There is a test that asks both features for "the
-high" over deliberately different windows and asserts they **disagree**.
-
-The engine's attention level, confidence and freshness are shown because they
-are useful, but they are nested under `engine` and labelled *not
-session-scoped*, because they are computed on the engine's own anomaly horizon.
-
-**In simulator mode there is no exchange session** — the synthetic market runs
-continuously, which is the entire reason it can be demoed while NSE is shut.
-Inventing an open and a close for it would fabricate a boundary the data does
-not have, so the window becomes a trailing stretch of the same *length* as an
-NSE session and says plainly that it is not one.
-
-Patterns are emitted only where the data supports them: unusual volume spike,
-unusually large movement, sustained movement, sudden reversal, volatility
-increase, divergence from market or sector, near the window high or low. Each
-is past-tense and carries the evidence that produced it.
-
-> "Unusually large" is measured against the window's own **trimmed** volatility.
-> The naive comparison cannot work: a move delivered in one jump *is* `sd × √n`
-> by construction, so it would score exactly 1σ however violent it was — the
-> outlier inflating the very yardstick it is measured against. Trimming the
-> largest few returns before estimating the scale fixes it.
-
-**Nothing here is forward-looking.** No BUY, SELL, HOLD, target price or
-prediction, and a test scans all generated text for that vocabulary.
-
-### Alerts
-
-Five types: price crosses above, price falls below, change since last viewed
-exceeds, attention becomes HIGH, unusual volume.
-
-**The crossing state machine is the whole problem.** A naive alert fires on
-every evaluation where the condition holds, so a ₹1350 threshold with the price
-at ₹1352 re-fires every fifteen seconds forever. What "tell me when it crosses
-1350" means is an *edge*, not a level:
-
-| Price | State | Result |
-|---|---|---|
-| 1348 | armed, condition false | nothing |
-| 1350 | armed, condition true | **fires**, disarms |
-| 1351 | disarmed | nothing |
-| 1352 | disarmed | nothing |
-| 1348 | below the reset band | re-arms, silent |
-| 1352 | armed, condition true | **fires again** |
-
-With **hysteresis**, because re-arming exactly at the threshold is not enough —
-a price oscillating 1349.9 / 1350.1 would satisfy "crossed" on every wobble.
-Re-arming needs the value a configurable band clear of the line (0.1% of the
-threshold for prices; a fixed rupee band cannot suit both a ₹275 stock and a
-₹4,000 one).
-
-The `armed` flag lives in the database, so **a restart cannot turn a move the
-user has already been told about back into news.** Tested by rebuilding the
-store over the same database.
-
-**Data quality gates everything.** An alert is only evaluated against an
-observation the freshness layer calls `live` or `delayed`. A stale price fires
-nothing; a `market_closed` period is not movement, so nothing fires during it.
-Skipped evaluations record why and **leave the crossing state untouched** —
-arming or disarming from data we have just declared untrustworthy would let a
-stale reading suppress the real crossing that follows.
-
-Evaluation hangs off the ingestion tick, because the moment new observations
-land is exactly when a crossing can have happened — so an alert fires whether or
-not anyone has the page open.
-
-### "Why wasn't I alerted?"
-
-An alert system that only ever says nothing is unauditable. For any alert that
-did not fire, the answer is specific and computed from the engine — never a
-generic message:
-
-| Situation | What it says |
-|---|---|
-| Below a price threshold | `Currently ₹1412.30 — ₹37.70 below your ₹1450 threshold` |
-| Attention rule unmet | `Attention is MODERATE, not HIGH: the score is 0.43 and HIGH needs 0.7` |
-| Stale feed | `Not evaluated: the newest observation is stale (1502s old). Alerts only run against live or delayed data.` |
-| Already fired | `Already fired at ₹1352. It will not fire again until the value comes back past ₹1348.65` |
-| No baseline | `you have not opened this symbol, so there is no baseline to compare against` |
-
-Alongside every one of those sit the **feature facts** that produced it, each
-carrying its own number: *price movement is not unusual for this stock (0.4σ)*,
-*volume is normal (1.0×)*, *the market moved similarly (+0.084% vs +0.041%)*,
-*sector comparison unavailable (insufficient_peers)*.
-
-Three things make it trustworthy rather than decorative:
-
-- **A stale feed is reported on its own, and never alongside "condition not
-  met".** The rule was not checked and found wanting; it was not checked at all.
-  `met` is `null`, not `false`. A permanently stale feed must not be able to
-  hide behind language that suggests a quiet market.
-- **"Measured and ordinary" and "could not measure" are different statements.**
-  Both produce a low score and only one means the market was calm.
-- **The explainer and the evaluator read the same rules.** Both import them from
-  `alert-rules.js`, which exists precisely so neither keeps a private copy —
-  an audit trail that disagrees with the thing it audits is worse than none.
-  There is a test that runs a diagnosis and an evaluation side by side and
-  asserts they agree on every verdict.
-
-The mirror case is recorded too: a fired alert stores its rule, the value that
-crossed it and which signals contributed — **captured at fire time**, because by
-the time anyone reads the notification the market has moved and a recomputed
-explanation would describe a different moment.
-
-No LLM anywhere in this path. Every sentence is a template over a real feature
-value.
-
-### Demo scenarios
-
-Named, seeded and reproducible. `npm run demo -- <condition> [timeAway]`.
-
-| Condition | Produces |
-|---|---|
-| `normal` | All LOW — the baseline to read the others against |
-| `high_volume` | MODERATE on turnover alone, price move unremarkable |
-| `stock_outperforms` | **HIGH with all four signals, sector included** |
-| `market_wide` | LOW despite a 6σ move — the relative signals cancel |
-| `data_delay` | STALE, confidence halved, alerts refusing to fire |
-| `source_conflict` | A 0.9% disagreement reported, not silently resolved |
-
-Time away — 1h, 6h, 24h, 2d — is the existing absence override, now named and
-one click in the UI. It changes only the reported duration and whether the
-summary enumerates or aggregates, never a score.
-
-**The cold open is asserted, not assumed.** `stock_outperforms` must produce
-HIGH *with the sector signal available*, because a HIGH reached on three signals
-with sector renormalised away does not demonstrate the sector comparison at all.
-The first version of that scenario silently failed this: its move completed an
-hour before the end, outside the engine's fifteen-minute anomaly horizon, so it
-scored 0.29 and LOW. The test caught it, and still guards it.
-
-> Market conditions are a **seeding** operation applied to a fresh database,
-> not a live switch. The snapshot log is append-only, so writing crafted history
-> over a live series would contaminate the statistics and cost these scenarios
-> the determinism that is their entire point.
-
-### One definition of "needs attention"
-
-The engine computes `needsAttention` once per item and the summary banner, the
-UI filter chip and the ranking all read that field. These had drifted into two
-independent definitions — the banner counted `HIGH`/`MODERATE` while the chip
-counted stale-or-conflicting rows — so one screen could show "Needs attention 0"
-beside "2 deserve your attention". Two definitions of one word is a bug however
-defensible each is separately. Data health is still visible, through the
-freshness pill and `dataQuality`, but it is a different question from
-meaningfulness.
+The score is **not** rewritten when the floor applies: it stays the honest output
+of the formula, so the published breakdown still reproduces it. Only the level is
+capped, and the response carries `levelFloor` so the UI can say why a 0.44 shows
+as `LOW`. As it happens the default weights make this unreachable from relative
+signals alone — market and sector carry 0.20 each and neither can reach 1.0 — so
+the floor is the explicit guarantee and the arithmetic is the implicit one. Both
+are tested.
 
 ### Score and confidence are different things
 
@@ -323,9 +148,70 @@ confidence = observation × freshness × depth × coverage
 *depth* — how much history the statistics had
 *coverage* — how much of the total signal weight was measurable
 
+### One definition of "needs attention"
+
+The engine computes `needsAttention` once per item and the summary banner, the
+UI filter chip and the ranking all read that field. These had drifted into two
+independent definitions — the banner counted `HIGH`/`MODERATE` while the chip
+counted stale-or-conflicting rows — so one screen could show "Needs attention 0"
+beside "2 deserve your attention". Two definitions of one word is a bug however
+defensible each is separately. Data health is still visible, through the
+freshness pill and `dataQuality`, but it is a different question from
+meaningfulness.
+
+### Determinism
+
+Given the same snapshots, the same config and the same reference timestamp, the
+engine produces the same score, the same level and the same reasons. There is no
+randomness anywhere in the path, and **every "now" arrives through an injected
+clock** — including in production, where it is just `Date.now`. A default
+parameter buried three modules down would make the guarantee unverifiable.
+
+The test evaluates two separately-constructed, identically-seeded databases and
+compares serialised output byte for byte.
+
 ---
 
-## Design decisions worth defending
+## Data engineering
+
+The statistics are only as honest as the series underneath them, and most of the
+work in this repo is in the series rather than the formula.
+
+### Two timestamps per observation
+
+`timestamp` is the instant the price is *about*. `ingested_at` is the instant we
+*learned* it. A delayed feed makes them differ by 15–20 minutes, and collapsing
+them destroys any ability to report freshness honestly — you can no longer tell
+"the market is quiet" from "our feed stopped 20 minutes ago". Every freshness
+state, every alert gate and the entire audit trail depend on holding both.
+
+A lower bound rejects a timestamp in seconds where milliseconds were expected;
+a value of `1.7e9` silently parses as January 1970 and would poison every
+window it landed in.
+
+### The log is append-only, enforced by the database
+
+`BEFORE UPDATE` and `BEFORE DELETE` triggers `RAISE(ABORT)`. Event sourcing that
+relies on everyone remembering not to write `UPDATE` is not an invariant, it is a
+hope. A test attempts both from raw SQL and asserts the abort.
+
+The consequence is that a price the user has already seen can never be
+retroactively rewritten, which is what makes "since you last looked" a
+statement about observed history rather than about whatever the source says
+today.
+
+### One instrument is one key
+
+`RELIANCE`, `reliance` and `RELIANCE.NS` used to file as three separate keys, so
+a watchlist entry under one saw a third of its own history. NSE is the implied
+venue and its suffix now collapses. `.BO` is preserved, because BSE is a
+genuinely different venue trading at a genuinely different price — merging them
+would corrupt the NSE series and then report the result as a source conflict
+with itself.
+
+Canonicalisation is applied at **both** boundaries — watchlist writes and
+snapshot writes — so the database can only ever hold canonical keys and no
+reader has to remember to normalise.
 
 ### Returns are measured on a fixed bar grid
 
@@ -337,119 +223,31 @@ standard deviation — which **inflates** it, and an inflated standard deviation
 silent and would look like "the engine is conservative".
 
 So observations are projected onto a 60-second grid first, and every return
-covers the same elapsed time. Carry-forward is capped at two bars: without a
-cap, a ten-minute outage fills ten bars with one stale price, producing a run of
-fake zero returns that deflates volatility and makes whatever happens next look
-anomalous.
+covers the same elapsed time. Carry-forward is capped at two bars: without a cap,
+a ten-minute outage fills ten bars with one stale price, producing a run of fake
+zero returns that deflates volatility and makes whatever happens next look
+anomalous. Gaps past the cap stay `null` and propagate as gaps — the chart draws
+a break rather than a straight line across an outage.
 
-### The anomaly horizon is fixed, not the length of your absence
+### Numerical safety in one place
 
-The z-score measures a **15-minute** return against that stock's own
-distribution of 15-minute returns. It would have been defensible to z-score the
-return over exactly the user's absence instead — that is more literally
-on-thesis. It was rejected because:
+`engine/numeric.js` holds every arithmetic hazard: a standard-deviation floor so
+a flat series cannot divide by zero, a z clamp so one bad tick cannot dominate,
+a strictly-increasing bounded magnitude map, and `assertAllFinite` walking the
+whole output tree so a `NaN` cannot reach the UI as a blank. Seven adversarial
+histories are asserted to produce finite, in-range output: a single observation,
+a perfectly flat series, all-zero volume, a jump to 1e6, a ₹0.01 price, a 1e12
+volume spike, and a price alternating by one paisa.
 
-- The anomaly should be a property of the **stock**, not of when you logged in.
-  Otherwise two users see different z-scores for the same instrument at the same
-  instant.
-- A first visit has no absence window at all, so the signal would be unavailable
-  precisely when a user most needs orientation.
-- The surfaced-signal fingerprint would become user-relative and stop being
-  comparable.
+### Old is not stale
 
-Your personal horizon is fully represented — it is feature A, the headline
-number on every row.
-
-**Known statistical caveat:** the 15-minute windows overlap (one return ending
-at every bar), so the samples are autocorrelated. The standard-deviation
-estimate is still sound but its own standard error is larger than the raw count
-suggests. Non-overlapping windows would leave ~24 samples over a six-hour
-window — too few to estimate a spread from at all.
-
-### No ML library, and no LLM in the numeric path
-
-The anomaly detection is rolling mean and standard deviation. That is a
-decision, not a shortfall:
-
-- **Deterministic.** Same inputs, byte-identical output. An Isolation Forest's
-  `random_state` would make that guarantee someone else's to keep.
-- **Unit-testable.** Every branch has a test, including the divide-by-zero.
-- **Dependency-free.** Two runtime dependencies total.
-- **Explainable line by line** to a user who asks "why did you show me this" —
-  which a tree ensemble's feature importances are not.
-
-On this data — one instrument's own recent return distribution — a learned
-anomaly detector would score no better than a z-score, and could not be
-justified to the person reading the row.
-
-**Explanations are deterministic templates**, for the same reasons plus one
-more: an LLM could produce a fluent, plausible reason the data does not support.
-`"Price moved +2.1% while the market moved +0.4%"` is a report of two numbers we
-hold. `"Rose on positive earnings sentiment"` is a causal claim this system has
-no instrument for, and is forbidden regardless of how likely it is.
-
-Reasons are also **gated on evidence thresholds**: a 0.1-sigma move is not
-described as "unusually large", and a ratio of 1.02 is not "high volume". The
-contribution still counts toward the score; only the claim is withheld.
-Overstating one line costs trust in every other.
-
-> **If an LLM were added later** it could only ever be a *phrasing* layer over
-> these computed values, with the numbers passed through verbatim, a closed
-> vocabulary that cannot introduce causes, and a validator asserting every
-> figure in the output appears in the features. It must never decide a level.
-
-### No investment advice, anywhere
-
-The product says "deserves attention". Never "buy", "sell", "will rise", or a
-price target. No personalised recommendations, no predictions. There is a test
-that scans all generated text for advice-like and causal vocabulary.
-
-### The simulator has a market factor
-
-Every symbol used to be an independent noise field, which made "the whole market
-moved together" **impossible to generate** — and therefore made the
-market-relative and sector-relative signals impossible to demonstrate during a
-weekend when NSE and BSE are shut. Returns now decompose the way real ones do:
-
-```
-symbol_return = beta × market_return + idiosyncratic_return
-```
-
-Beta is deterministic per symbol in [0.6, 1.5]; the shared market series is
-addressable on its own so it can be ingested as the benchmark. Measured return
-correlations with the index run 0.13–0.84. Still O(1) at any instant, still
-gapping, still replayable from a seed.
-
-Two events recur on a seed-derived schedule so any recent window contains an
-anomaly to find: a large idiosyncratic price move on one symbol, and a volume
-spike on a modest price move on another.
-
-### Symbol identity
-
-`RELIANCE`, `reliance` and `RELIANCE.NS` used to file as three separate keys, so
-a watchlist entry under one saw a third of its own history. NSE is the implied
-venue and its suffix now collapses. `.BO` is preserved, because BSE is a
-genuinely different venue trading at a genuinely different price — and merging
-them would both corrupt the NSE series and then report the result as a source
-conflict with itself.
-
-Canonicalisation is applied at **both** boundaries — watchlist writes and
-snapshot writes — so the database can only ever hold canonical keys and no
-reader has to remember to normalise.
-
-### Sector peers are your own holdings
-
-A sector return is the mean of the user's *watched* peers in that sector, and
-needs at least two. The alternative — ingesting the whole sector map so the peer
-group is fixed — would mean polling a third-party endpoint for a dozen
-instruments nobody asked about, on every tick. The cost of the chosen rule is
-real and worth stating: the sector return depends on which peers you happen to
-watch, so adding a holding can change it. That is why every response **names
-the peers it used** rather than presenting the comparison as absolute.
-
-A symbol absent from the static map has **no sector**. None is invented for it —
-a fabricated classification produces a confidently wrong signal, which is worse
-than an honest gap.
+On a Sunday the newest real quote is Friday 15:30 IST, and that is *correct* — it
+is the last traded price. Flagging it for 62 straight hours is crying wolf. But a
+price from four minutes ago during a live session, when we poll every fifteen
+seconds, is genuinely broken. Five states carry the distinction: `live`,
+`delayed`, `market_closed`, `stale`, `no_data` — and data predating the last
+*open* session is still `stale`, because the feed broke while the market was
+trading.
 
 ### `last_viewed_at` semantics
 
@@ -465,85 +263,210 @@ And **no new observation is not a change of zero.** If the newest observation is
 the one you already saw — exactly what a stale feed produces — diffing it against
 itself yields `0.00 (0.00%)`, which reads as "we checked, the price is
 unchanged". The data does not support that. The row reports *no new observation
-since you looked* and shows the last known price with its age instead. The
-distinction matters because the two statements lead to opposite conclusions about
-whether the market is quiet or the feed is broken.
+since you looked* and shows the last known price with its age instead. The two
+statements lead to opposite conclusions about whether the market is quiet or the
+feed is broken.
 
 Note this triggers on the absence of a newer observation, **not** on staleness: a
 stale row that does have a genuine delta from before its feed stopped still
 reports it, because hiding that would throw away a real measurement.
 
-### Already-surfaced state
+### Sector peers are your own holdings
 
-A change the user has already been shown is not a discovery. Without
-persistence, a restart turns every ongoing move back into breaking news.
+A sector return is the mean of the user's *watched* peers in that sector, and
+needs at least two. The alternative — ingesting the whole sector map so the peer
+group is fixed — would mean polling a third-party endpoint for a dozen
+instruments nobody asked about, on every tick. The cost of the chosen rule is
+real and worth stating: the sector return depends on which peers you happen to
+watch, so adding a holding can change it. That is why every response **names the
+peers it used** rather than presenting the comparison as absolute.
 
-The fingerprint identifies the **event**, not the score: symbol, level, sorted
-reason codes, direction, a 1% magnitude bucket, and the viewing epoch. Keying on
-the score would refire every tick; keying on the symbol alone would never
-refire, so a move growing from 2% to 9% would stay silent. Pressing "Mark seen"
-starts a new epoch, so after the user explicitly acknowledges the state, the
-next change is legitimately new again.
-
-### Old is not stale
-
-On a Sunday the newest real quote is Friday 15:30 IST, and that is *correct* —
-it is the last traded price. Flagging it for 62 straight hours is crying wolf.
-But a price from four minutes ago during a live session, when we poll every
-fifteen seconds, is genuinely broken. Five states carry that distinction:
-`live`, `delayed`, `market_closed`, `stale`, `no_data` — and data predating the
-last *open* session is still `stale`, because the feed broke while the market
-was trading.
-
-### The log is append-only, enforced by SQLite
-
-`BEFORE UPDATE` and `BEFORE DELETE` triggers `RAISE(ABORT)`. Event sourcing that
-relies on everyone remembering not to write `UPDATE` is not an invariant, it is a
-hope. Two timestamps per row — `timestamp` (the instant the price is *about*) and
-`ingested_at` (the instant we *learned* it) — because a delayed feed makes them
-differ by 15–20 minutes and collapsing them destroys any ability to report
-freshness honestly.
+A symbol absent from the static map has **no sector**. None is invented for it —
+a fabricated classification produces a confidently wrong signal, which is worse
+than an honest gap.
 
 ---
 
-## Determinism
+## Product surface
 
-Given the same snapshots, the same config and the same reference timestamp, the
-engine produces the same score, the same level and the same reasons. There is no
-randomness anywhere in the path, and **every "now" arrives through an injected
-clock** — including in production, where it is just `Date.now`. A default
-parameter buried three modules down would make the guarantee unverifiable.
+### Since you were away
 
-The test evaluates two separately-constructed, identically-seeded databases and
-compares serialised output byte for byte.
+The landing view: how long you were gone, how much changed, how much of it
+deserves attention, then the few things that do — ranked by the engine, never by
+raw percentage change. Past a day away it aggregates per level instead of
+enumerating, because nobody returning after a weekend wants a tick-by-tick
+account.
 
-## Performance
+Loading it does not consume `last_viewed_at`, so the summary survives being
+read.
 
-Features are **not** recomputed per symbol per request:
+### The chart
 
-- **One batched history query** covers the watchlist and the benchmark;
-  every feature for every symbol is derived from that single result set in
-  memory.
-- **Memoised** on the log's high-water mark, the config, the clock bucket and
-  the viewing epochs. The UI polls every 5 seconds; with no new observation, the
-  second poll recomputes nothing.
-- Bar resampling is a single linear pass with a forward pointer, not a scan per
-  bar.
+Two ranges: **Since I checked** and **1D**. No 1W, no 1M, no 1Y — the row of
+calendar-period buttons every other price chart carries would dilute the single
+comparison this product makes, which is against your own last visit.
 
-**How this scales.** At a dozen symbols this is comfortably the right shape. The
-next bottleneck is the per-symbol conflict query and the width of the batched
-history read. Beyond roughly a few hundred watched symbols per process the move
-is to persisted rolling aggregates updated on ingest (mean, standard deviation
-and trailing volume per symbol), turning evaluation into an O(1) read per row.
-That was deliberately **not** built now: it introduces a second source of truth
-to reconcile against an append-only log, plus rebuild-on-restart and
-rebuild-on-backfill paths, for no measurable gain at this size. For many users
-the surfaced-signals table and `last_viewed_at` are already keyed by `user_id`,
-so the sharding boundary is a user.
+It carries the **period high and low** for the selected range (with their
+timestamps, first occurrence winning a tie) and the **last-viewed marker**. On 1D
+that marker is an interior dashed line with the region after it shaded:
+everything to its right happened while you were away. On "Since I checked" the
+visit *is* the left boundary, so it folds into the axis label rather than
+overlaying a line on the chart's edge and shading the entire plot.
 
----
+Honest details it does not paper over: a gap in the feed draws as a **break in
+the line**, never a straight join across an outage; the bar size respects the
+source's own cadence, so the grid is never finer than the data; a 1D window
+against a six-hour log draws the six hours it holds and says so; and fewer than
+three observations refuses to draw a line at all rather than implying a trend
+from two points.
 
-## API
+All of it is computed in [chart.js](backend/src/chart.js) — the browser scales
+and positions, it does not decide what the high is or where the marker goes.
+
+### Intraday analysis
+
+An "Analyze Intraday" action on the expanded row. Deterministic rolling
+statistics, no model and no forecast: current price, window high and low with
+their timestamps, window return, volatility, volume against normal, movement
+against the market and against sector peers.
+
+**The window is named before any number is shown, and nothing borrows across
+windows.** The app answers three different questions over three different
+horizons — since you last looked (per-user), 1D (the chart), and the session
+(this panel). A session high quietly sourced from the 1D range would be a lie
+that looks exactly like a fact, so every figure here is recomputed from the
+session window alone and anything the session cannot support reports
+`unavailable` with a reason. There is a test that asks both features for "the
+high" over deliberately different windows and asserts they **disagree**.
+
+The engine's attention level, confidence and freshness are shown because they are
+useful, but they are nested under `engine` and labelled *not session-scoped*,
+because they are computed on the engine's own anomaly horizon.
+
+**In simulator mode there is no exchange session** — the synthetic market runs
+continuously, which is the entire reason it can be demoed while NSE is shut.
+Inventing an open and a close for it would fabricate a boundary the data does not
+have, so the window becomes a trailing stretch of the same *length* as an NSE
+session and says plainly that it is not one.
+
+Patterns are emitted only where the data supports them: unusual volume spike,
+unusually large movement, sustained movement, sudden reversal, volatility
+increase, divergence from market or sector, near the window high or low. Each is
+past-tense and carries the evidence that produced it.
+
+> "Unusually large" is measured against the window's own **trimmed** volatility.
+> The naive comparison cannot work: a move delivered in one jump *is* `sd × √n`
+> by construction, so it would score exactly 1σ however violent it was — the
+> outlier inflating the very yardstick it is measured against. Trimming the
+> largest few returns before estimating the scale fixes it.
+
+### Alerts
+
+Five types: price crosses above, price falls below, change since last viewed
+exceeds, attention becomes HIGH, unusual volume.
+
+**The crossing state machine is the whole problem.** A naive alert fires on every
+evaluation where the condition holds, so a ₹1350 threshold with the price at
+₹1352 re-fires every fifteen seconds forever. What "tell me when it crosses 1350"
+means is an *edge*, not a level:
+
+| Price | State | Result |
+|---|---|---|
+| 1348 | armed, condition false | nothing |
+| 1350 | armed, condition true | **fires**, disarms |
+| 1351 | disarmed | nothing |
+| 1352 | disarmed | nothing |
+| 1348 | below the reset band | re-arms, silent |
+| 1352 | armed, condition true | **fires again** |
+
+With **hysteresis**, because re-arming exactly at the threshold is not enough — a
+price oscillating 1349.9 / 1350.1 would satisfy "crossed" on every wobble.
+Re-arming needs the value a configurable band clear of the line (0.1% of the
+threshold for prices; a fixed rupee band cannot suit both a ₹275 stock and a
+₹4,000 one).
+
+The `armed` flag lives in the database, so **a restart cannot turn a move the
+user has already been told about back into news.** Tested by rebuilding the store
+over the same database.
+
+**Data quality gates everything.** An alert is only evaluated against an
+observation the freshness layer calls `live` or `delayed`. A stale price fires
+nothing; a `market_closed` period is not movement, so nothing fires during it.
+Skipped evaluations record why and **leave the crossing state untouched** —
+arming or disarming from data we have just declared untrustworthy would let a
+stale reading suppress the real crossing that follows.
+
+Evaluation hangs off the ingestion tick, because the moment new observations land
+is exactly when a crossing can have happened — so an alert fires whether or not
+anyone has the page open.
+
+### "Why wasn't I alerted?"
+
+For any alert that did not fire, the answer is specific and computed from the
+engine — never a generic message:
+
+| Situation | What it says |
+|---|---|
+| Below a price threshold | `Currently ₹1412.30 — ₹37.70 below your ₹1450 threshold` |
+| Attention rule unmet | `Attention is MODERATE, not HIGH: the score is 0.43 and HIGH needs 0.7` |
+| Stale feed | `Not evaluated: the newest observation is stale (1502s old). Alerts only run against live or delayed data.` |
+| Already fired | `Already fired at ₹1352. It will not fire again until the value comes back past ₹1348.65` |
+| No baseline | `you have not opened this symbol, so there is no baseline to compare against` |
+
+Alongside every one of those sit the **feature facts** that produced it, each
+carrying its own number: *price movement is not unusual for this stock (0.4σ)*,
+*volume is normal (1.0×)*, *the market moved similarly (+0.084% vs +0.041%)*,
+*sector comparison unavailable (insufficient_peers)*.
+
+Three things make it trustworthy rather than decorative:
+
+- **A stale feed is reported on its own, and never alongside "condition not
+  met".** The rule was not checked and found wanting; it was not checked at all.
+  `met` is `null`, not `false`. A permanently stale feed must not be able to hide
+  behind language that suggests a quiet market.
+- **"Measured and ordinary" and "could not measure" are different statements.**
+  Both produce a low score and only one means the market was calm.
+- **The explainer and the evaluator read the same rules.** Both import them from
+  [alert-rules.js](backend/src/alert-rules.js), which exists precisely so neither
+  keeps a private copy — an audit trail that disagrees with the thing it audits
+  is worse than none. A test runs a diagnosis and an evaluation side by side and
+  asserts they agree on every verdict.
+
+The mirror case is recorded too: a fired alert stores its rule, the value that
+crossed it and which signals contributed — **captured at fire time**, because by
+the time anyone reads the notification the market has moved and a recomputed
+explanation would describe a different moment.
+
+### Demo scenarios
+
+Named, seeded and reproducible: `npm run demo -- <condition> [timeAway]`.
+
+| Condition | Produces |
+|---|---|
+| `normal` | All LOW — the baseline to read the others against |
+| `high_volume` | MODERATE on turnover alone, price move unremarkable |
+| `stock_outperforms` | **HIGH with all four signals, sector included** |
+| `market_wide` | LOW despite a 6σ move — the relative signals cancel |
+| `data_delay` | STALE, confidence halved, alerts refusing to fire |
+| `source_conflict` | A 0.9% disagreement reported, not silently resolved |
+
+Time away — `1h`, `6h`, `24h`, `2d` — is the absence override, named and one
+click in the UI. It changes only the reported duration and whether the summary
+enumerates or aggregates, never a score.
+
+**The cold open is asserted, not assumed.** `stock_outperforms` must produce HIGH
+*with the sector signal available*, because a HIGH reached on three signals with
+sector renormalised away does not demonstrate the sector comparison at all. The
+first version of that scenario silently failed this: its move completed an hour
+before the end, outside the engine's fifteen-minute anomaly horizon, so it scored
+0.29 and LOW. The test caught it, and still guards it.
+
+> Market conditions are a **seeding** operation applied to a fresh database, not
+> a live switch. The snapshot log is append-only, so writing crafted history over
+> a live series would contaminate the statistics and cost these scenarios the
+> determinism that is their entire point.
+
+### API
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -556,6 +479,7 @@ so the sharding boundary is a user.
 | `GET` `POST` | `/api/alerts` | List / create alert definitions |
 | `DELETE` | `/api/alerts/:id` | Remove an alert |
 | `GET` | `/api/alerts/events` | The notification list: what fired and why |
+| `POST` | `/api/alerts/events/acknowledge` | Mark the notification list seen |
 | `POST` | `/api/alerts/evaluate` | Force an evaluation (demo affordance) |
 | `GET` | `/api/alerts/diagnostics` | Why each alert did or did not fire |
 | `GET` | `/api/demo/scenarios` | The named scenario catalogue |
@@ -567,6 +491,10 @@ so the sharding boundary is a user.
 | `POST` | `/api/watchlist/:symbol/viewed` | Stamp "I have now seen this" |
 | `GET` | `/api/snapshots/:symbol` | Raw log — the audit trail |
 | `POST` | `/api/ingest/tick` | Force a poll now (demo affordance) |
+
+Every parameter that reaches SQL is validated and bounded at the boundary,
+including `limit` — a negative `LIMIT` is unbounded in SQLite, and `-1` is
+truthy, so `Number(x) || fallback` does not catch it.
 
 `/api/watchlist` **extends** the previous contract rather than reshaping it:
 `latest`, `freshness`, `delta` and `conflict` are still in the same places, with
@@ -590,45 +518,51 @@ the engine's fields alongside. There is a test asserting that.
 ```
 
 All business logic is in the backend. The frontend renders; it does not
-recompute.
+recompute — no threshold, weight or level boundary appears anywhere in
+[frontend/](frontend/).
 
-## Architecture
+---
 
-```
-backend/src/
-  symbols.js          one definition of "which instrument is this"
-  config.js           every knob, with the reasoning attached
-  db.js               schema; append-only enforced by triggers
-  snapshot-log.js     the only reader/writer of observations
-  watchlist.js        add / remove / list / markViewed
-  freshness.js        old vs stale, and source conflicts
-  ingest.js           poll loop + boot backfill
-  summary.js          "since you were away"
-  chart.js            the chart series: two ranges, high/low, marker
-  intraday.js         session analysis - its own window, never borrowed
-  alerts.js           definitions, the crossing state machine, events
-  alert-rules.js      one definition of each rule, shared by both below
-  alert-diagnostics.js  why an alert did or did not fire
-  api.js              HTTP surface
-  engine/
-    numeric.js        every arithmetic hazard, in one place
-    returns.js        bar resampling, rolling statistics
-    features.js       the five measurements, no decisions
-    score.js          weighting, renormalisation, levels, confidence
-    reasons.js        deterministic explanation templates
-    surfaced.js       fingerprints and the "already shown" store
-    index.js          orchestration, batching, memoisation, ranking
-  sources/
-    index.js          the DataSource interface
-    noise.js          deterministic, O(1)-addressable pseudo-randomness
-    simulator.js      synthetic market with a shared market factor
-    yahoo.js          real NSE/BSE via raw fetch
-  demo/
-    fixture.js        the reproducible scenario
-    seed.js           npm run demo
+## Setup
+
+```bash
+npm install
+npm start                 # http://localhost:3000
+npm test                  # 191 tests, no network / clock / filesystem
+npm run demo              # the full fixture
+npm run demo -- stock_outperforms 6h    # a named scenario
 ```
 
-## Configuration
+Requires Node 22+ (developed on 24). No API keys, no configuration file, no
+migration step. The database is created on first boot.
+
+### The Yahoo switch
+
+```bash
+DATA_SOURCE=yahoo npm start          # real NSE/BSE prices
+DATA_SOURCE=simulator npm start      # the default: deterministic synthetic market
+```
+
+Both implement the same four-method `DataSource` interface
+([sources/index.js](backend/src/sources/index.js)), and nothing downstream of
+ingestion knows which one is attached. Yahoo is an unofficial endpoint reached
+with raw `fetch` — no SDK, no key — and its `regularMarketVolume` fallback is
+day-cumulative rather than per-interval, which is why volume is reported as a
+ratio and why that fallback lowers the observation's confidence.
+
+The simulator is the default because a hackathon demo has to work at 2am on a
+Sunday with both exchanges shut, and because a deterministic market is the only
+way to assert engine behaviour end to end.
+
+Useful overrides while demoing:
+
+```bash
+curl 'localhost:3000/api/summary?awayMs=180000000'   # simulate a 50h absence
+INGEST_ENABLED=false npm start                       # freeze the feed
+SIM_SEED=whatever npm start                          # a different market
+```
+
+### Configuration
 
 Everything lives in [config.js](backend/src/config.js); nothing else reads
 `process.env`. Selected values:
@@ -652,14 +586,15 @@ Everything lives in [config.js](backend/src/config.js); nothing else reads
 | `ENGINE_LONG_ABSENCE_MS` | `86400000` | Past this, the summary aggregates |
 | `SECTOR_MIN_PEERS` | `2` | One peer is not a sector |
 
-## Tests
+### Tests
 
 ```bash
-npm test    # 189 tests
+npm test    # 191 tests
 ```
 
 No network, no filesystem, no uncontrolled clock — in-memory SQLite, stub
-sources, fixed timestamps. They assert the *guarantees*, not the implementation:
+sources, fixed timestamps. They assert the *guarantees*, not the
+implementation:
 
 - normal vs unusual movement; volume spike on a small move; large move on normal
   volume
@@ -667,44 +602,238 @@ sources, fixed timestamps. They assert the *guarantees*, not the implementation:
 - every missing-signal case, with the renormalisation checked by recomputing the
   score from the published breakdown
 - insufficient history; zero and near-zero volatility; no `NaN`/`Infinity`
-  across seven adversarial histories
+  across seven adversarial histories (single point, flat, zero volume, 1e6 jump,
+  ₹0.01 price, 1e12 volume, one-paisa alternation)
 - `delayed`, `stale`, `market_closed` and conflicting-source states flowing
   through to the result
 - first visit, short absence, long absence, repeated and surfaced signals,
   surfaced state surviving a restart
+- the alert crossing edge, hysteresis, the persisted `armed` flag across a
+  restart, and diagnosis agreeing with evaluation on every verdict
+- session metrics never borrowing from the engine's window, asserted by making
+  the two windows disagree
 - ranking order, and determinism as byte-identical output
 - history not being rewritable even by raw SQL; a seconds-vs-milliseconds
   timestamp being refused
+- all generated text scanned for advice-like and causal vocabulary
 - the simulated market matching its golden fingerprint
 
-## The demo scenario
+---
 
-`npm run demo` writes a fixed scenario and prints it — the demo script and the
-regression baseline are the same artefact.
+## Architecture
 
-Two demos, for two different things:
+```
+  ┌────────────┐   sources/         simulator (deterministic, O(1) at any instant)
+  │  SOURCES   │   index.js         yahoo     (real NSE/BSE, raw fetch)
+  └─────┬──────┘                    one 4-method interface, nothing below knows which
+        │
+  ┌─────▼──────┐   ingest.js        poll loop + boot backfill, canonicalises keys,
+  │ INGESTION  │                    records absences and failures as facts
+  └─────┬──────┘
+        │
+  ┌─────▼──────┐   db.js            append-only; UPDATE/DELETE aborted by trigger
+  │  SNAPSHOT  │   snapshot-log.js  two timestamps per row: about-instant, learned-instant
+  │   STORE    │                    the only reader/writer of observations
+  └─────┬──────┘
+        │
+  ┌─────▼──────┐   engine/          fixed 60s bar grid, capped carry-forward,
+  │  FEATURE   │   returns.js       rolling mean and σ over a 6h window
+  │ EXTRACTION │   features.js      five measurements, no decisions
+  └─────┬──────┘
+        │
+  ┌─────▼──────┐   engine/          z-score vs this stock's own distribution,
+  │  ANOMALY   │   numeric.js       σ floor, z clamp, every hazard in one place
+  │ DETECTION  │                    volume ratio, market-relative, sector-relative
+  └─────┬──────┘
+        │
+  ┌─────▼──────┐   engine/          Σ(weight × contribution) ÷ available weight
+  │ MEANINGFUL │   score.js         absolute level thresholds, level floor
+  │   CHANGE   │
+  │   SCORE    │
+  └─────┬──────┘
+        │
+  ┌─────▼──────┐   engine/          observation × freshness × depth × coverage
+  │ CONFIDENCE │   score.js         kept separate from the score, never merged
+  └─────┬──────┘   freshness.js
+        │
+  ┌─────▼──────┐   engine/          score, then confidence, then symbol —
+  │  RANKING   │   index.js         never raw percentage change
+  └─────┬──────┘
+        │
+        ├──────────────────────────────┬─────────────────────────────┐
+        │                              │                             │
+  ┌─────▼──────┐              ┌────────▼────────┐          ┌─────────▼─────────┐
+  │   ALERTS   │              │       UI        │          │  EXPLANATION      │
+  │ alerts.js  │              │  api.js →       │          │  reasons.js       │
+  │ alert-     │              │  frontend/      │          │  alert-           │
+  │  rules.js  │              │                 │          │   diagnostics.js  │
+  │ crossing   │              │  chart.js       │          │  deterministic    │
+  │ edges,     │              │  intraday.js    │          │  templates over   │
+  │ hysteresis │              │  summary.js     │          │  computed values  │
+  └────────────┘              └─────────────────┘          └───────────────────┘
+```
 
-- **`npm run demo`** — the engine, deterministically. Its printed output *is* the
-  artefact, and its guarantees hold at the reference instant it was seeded for.
-- **`npm start`** (simulator) — the live UI, with prices actually moving.
+```
+backend/src/
+  symbols.js            one definition of "which instrument is this"
+  config.js             every knob, with the reasoning attached
+  db.js                 schema; append-only enforced by triggers
+  snapshot-log.js       the only reader/writer of observations
+  watchlist.js          add / remove / list / markViewed
+  freshness.js          old vs stale, and source conflicts
+  ingest.js             poll loop + boot backfill
+  delta.js              the raw since-viewed diff (pre-engine path)
+  summary.js            "since you were away"
+  chart.js              the chart series: two ranges, high/low, marker
+  intraday.js           session analysis — its own window, never borrowed
+  alerts.js             definitions, the crossing state machine, events
+  alert-rules.js        one definition of each rule, shared by the two below
+  alert-diagnostics.js  why an alert did or did not fire
+  api.js                HTTP surface, validation, bounds
+  server.js             wiring and lifecycle
+  engine/
+    numeric.js          every arithmetic hazard, in one place
+    returns.js          bar resampling, rolling statistics
+    features.js         the five measurements, no decisions
+    score.js            weighting, renormalisation, levels, confidence
+    reasons.js          deterministic explanation templates
+    surfaced.js         fingerprints and the "already shown" store
+    index.js            orchestration, batching, memoisation, ranking
+  sources/
+    index.js            the DataSource interface
+    noise.js            deterministic, O(1)-addressable pseudo-randomness
+    simulator.js        synthetic market with a shared market factor
+    yahoo.js            real NSE/BSE via raw fetch
+  demo/
+    fixture.js          the reproducible fixture
+    scenarios.js        the six named market conditions
+    seed.js             npm run demo
 
-The fixture is a static snapshot, so a fixture database left running will
-correctly report every row as `stale` once its newest observation ages past the
-tolerance, and scores drift as the anomaly window slides over the frozen data.
-That is the freshness layer working, not the demo breaking — but it is why the
-live UI demo uses the simulator.
+frontend/                plain ES modules, no framework, no build step
+  index.html  app.js  panels.js  chart.js  styles.css
+```
 
-| Symbol | Shows |
-|---|---|
-| `INFY` | **HIGH** — big idiosyncratic move, 5x volume, market flat |
-| `SBIN` | **MODERATE** — 2.9x volume on a 0.8% move |
-| `TCS` `WIPRO` `HCLTECH` | **LOW**, and INFY's sector peers |
-| `HDFCBANK` | Two sources disagreeing 0.9% — the conflict path |
-| `RELIANCE` / `RELIANCE.BO` | The **real** NSE/BSE pair, correctly *not* a conflict |
-| `ITC` | Missing volume — unavailable, weight renormalised |
-| `MARUTI` | Thin history — "not enough observations yet" |
+---
 
-### A correction on the conflict case
+## Decisions, and why
+
+Each of these is a place where a reasonable person would have chosen otherwise.
+The reason matters more than the choice.
+
+### No ML library
+
+The anomaly detection is rolling mean and standard deviation.
+
+- **Deterministic.** Same inputs, byte-identical output. An Isolation Forest's
+  `random_state` would make that guarantee someone else's to keep.
+- **Unit-testable.** Every branch has a test, including the divide-by-zero.
+- **Dependency-free.** Two runtime dependencies total.
+- **Explainable line by line** to a user who asks "why did you show me this" —
+  which a tree ensemble's feature importances are not.
+
+On this data — one instrument's own recent return distribution — a learned
+anomaly detector would score no better than a z-score, and could not be
+justified to the person reading the row.
+
+### No LLM in the numeric path, and none in the explanations
+
+**Explanations are deterministic templates.** An LLM could produce a fluent,
+plausible reason the data does not support. `"Price moved +2.1% while the market
+moved +0.4%"` is a report of two numbers we hold. `"Rose on positive earnings
+sentiment"` is a causal claim this system has no instrument for, and is
+forbidden regardless of how likely it is.
+
+Reasons are also **gated on evidence thresholds**: a 0.1-sigma move is not
+described as "unusually large", and a ratio of 1.02 is not "high volume". The
+contribution still counts toward the score; only the claim is withheld.
+Overstating one line costs trust in every other.
+
+> **If an LLM were added later** it could only ever be a *phrasing* layer over
+> these computed values, with the numbers passed through verbatim, a closed
+> vocabulary that cannot introduce causes, and a validator asserting every figure
+> in the output appears in the features. It must never decide a level.
+
+### No recommendations, predictions, or buy/sell/hold
+
+The product says "deserves attention". Never "buy", "sell", "will rise", or a
+price target; no personalised recommendations, no forecasts, no targets. Every
+pattern is past-tense.
+
+This is not timidity about scope. A tool that ranks *attention* is making a
+claim it can defend from data it holds. A tool that says "buy" is making a claim
+about the future, about the user's finances and about their risk tolerance,
+none of which this system measures. A test scans all generated text for that
+vocabulary, so the boundary is enforced rather than merely intended.
+
+### Absolute thresholds, not percentile ranking
+
+Covered above under [Levels](#levels) — a percentile label describes your
+watchlist rather than the instrument, and makes every level unstable under an
+unrelated add.
+
+### No gamification
+
+No streaks, badges, leaderboards or "you've checked 5 days in a row". The
+product's value is that it lets you look *less often* — engagement mechanics
+would be working directly against the thesis, and in a financial context they
+push people to trade for the app's benefit rather than their own.
+
+### The anomaly horizon is fixed, not the length of your absence
+
+The z-score measures a **15-minute** return against that stock's own
+distribution of 15-minute returns. Z-scoring the return over exactly the user's
+absence would be more literally on-thesis, and was rejected because:
+
+- The anomaly should be a property of the **stock**, not of when you logged in.
+  Otherwise two users see different z-scores for the same instrument at the same
+  instant.
+- A first visit has no absence window at all, so the signal would be unavailable
+  precisely when a user most needs orientation.
+- The surfaced-signal fingerprint would become user-relative and stop being
+  comparable.
+
+Your personal horizon is fully represented — it is the headline number on every
+row, and the leading line of every explanation.
+
+**Known statistical caveat:** the 15-minute windows overlap (one return ending at
+every bar), so the samples are autocorrelated. The standard-deviation estimate is
+still sound but its own standard error is larger than the raw count suggests.
+Non-overlapping windows would leave ~24 samples over a six-hour window — too few
+to estimate a spread from at all.
+
+### The simulator has a market factor
+
+Every symbol used to be an independent noise field, which made "the whole market
+moved together" **impossible to generate** — and therefore made the
+market-relative and sector-relative signals impossible to demonstrate on a
+weekend. Returns now decompose the way real ones do:
+
+```
+symbol_return = beta × market_return + idiosyncratic_return
+```
+
+Beta is deterministic per symbol in [0.6, 1.5]; the shared market series is
+addressable on its own so it can be ingested as the benchmark. Measured return
+correlations with the index run 0.13–0.84. Still O(1) at any instant, still
+gapping, still replayable from a seed.
+
+Two events recur on a seed-derived schedule so any recent window contains an
+anomaly to find: a large idiosyncratic price move on one symbol, and a volume
+spike on a modest price move on another.
+
+### Already-surfaced state is keyed on the event, not the score
+
+A change the user has already been shown is not a discovery. Without
+persistence, a restart turns every ongoing move back into breaking news.
+
+The fingerprint identifies the **event**: symbol, level, sorted reason codes,
+direction, a 1% magnitude bucket, and the viewing epoch. Keying on the score
+would refire every tick; keying on the symbol alone would never refire, so a
+move growing from 2% to 9% would stay silent. Pressing "Mark seen" starts a new
+epoch, so after the user explicitly acknowledges the state, the next change is
+legitimately new again.
+
+### The conflict fixture is constructed, and labelled as such
 
 The brief suggested using a real captured pair — RELIANCE at 1327.60 on NSE
 against 1329.10 on BSE, seconds apart — as the conflicting-source case. **It
@@ -718,9 +847,126 @@ cannot be one**, for two independent reasons:
 Lowering the tolerance until real, agreeing data trips the alarm would be tuning
 the product to make a demo fire. So the real pair demonstrates what it genuinely
 shows — two venues, correctly separate, correctly not in conflict — and the
-conflict path is shown by a labelled constructed disagreement on one symbol,
+conflict path is shown by a **labelled constructed disagreement** on one symbol,
 which is the shape a real conflict actually takes. Both are asserted in
 [fixture.test.js](backend/test/fixture.test.js).
+
+### The fixture and the demo script are the same artefact
+
+`npm run demo` writes a fixed scenario and prints it, so the demo narration and
+the regression baseline cannot drift apart.
+
+| Symbol | Shows |
+|---|---|
+| `INFY` | **HIGH** — big idiosyncratic move, 5x volume, market flat |
+| `SBIN` | **MODERATE** — 2.9x volume on a 0.8% move |
+| `TCS` `WIPRO` `HCLTECH` | **LOW**, and INFY's sector peers |
+| `HDFCBANK` | Two sources disagreeing 0.9% — the conflict path |
+| `RELIANCE` / `RELIANCE.BO` | The **real** NSE/BSE pair, correctly *not* a conflict |
+| `ITC` | Missing volume — unavailable, weight renormalised |
+| `MARUTI` | Thin history — "not enough observations yet" |
+
+The fixture is a static snapshot, so a fixture database left running will
+correctly report every row as `stale` once its newest observation ages past the
+tolerance, and scores drift as the anomaly window slides over frozen data. That
+is the freshness layer working, not the demo breaking — but it is why the live UI
+demo uses the simulator.
+
+---
+
+## Scalability
+
+### What is already the right shape
+
+**The expensive work is per-symbol, not per-user.** Bar resampling, rolling mean
+and standard deviation, the price z-score, the volume ratio and the
+market-relative comparison are all properties of an *instrument at an instant*.
+Ten thousand users watching RELIANCE ask the identical question, and the answer
+is identical. On top of that sits a thin per-user layer:
+
+| Per symbol per tick | Per user per request |
+|---|---|
+| bar grid, rolling μ and σ | `last_viewed_at` lookup → change since viewed |
+| price z-score, volume ratio | already-surfaced fingerprint check |
+| market-relative excess | ranking of their own rows |
+| freshness, source conflict | sector peer group (see below) |
+
+The right-hand column is indexed reads and comparisons — cheap enough that
+personalisation costs a lookup rather than a recomputation. That separation is
+the load-bearing property for scale, and it is why the four scored signals were
+defined as facts about instruments rather than facts about users.
+
+**The sector signal is the deliberate exception.** Peers are drawn from the
+user's own holdings, so the sector return is user-relative and cannot be shared.
+That was chosen for the reason given [above](#sector-peers-are-your-own-holdings)
+— the alternative is polling a dozen instruments nobody asked about — and the
+cost is exactly this: one of five features does not amortise across users. With a
+real exchange classification feed the peer group becomes fixed and this feature
+joins the left-hand column.
+
+**What the code does today.** Per request: one batched history query covering the
+whole watchlist plus the benchmark, with every feature derived from that single
+result set in memory; results memoised on the log's high-water mark, the config
+identity, the clock bucket and the viewing epochs, so the UI's 5-second poll
+recomputes nothing when no observation has landed; bar resampling is a single
+linear pass with a forward pointer, not a scan per bar.
+
+The memo is a **single slot keyed by user** — correct for one user, and the first
+thing to change for many: a per-symbol feature cache with a per-user overlay,
+which is the same split the table above already describes.
+
+### The real limit: SQLite has one writer
+
+This is the honest ceiling, and it is not query performance.
+
+`better-sqlite3` is synchronous and in-process. WAL mode is enabled, so readers
+never block the writer and the writer never blocks readers — but there is still
+**exactly one writer at a time, in one process, against one local file**. Two
+app instances cannot share the database over a network, and a second ingestion
+process would serialise against the first.
+
+At demo scale this is a feature, not a compromise: no connection pool, no
+network round trip per query, microsecond reads, and a database file you can
+copy to reproduce a bug exactly. It is genuinely the right choice for a
+single-process app tracking tens of symbols for one user.
+
+It fails at three specific points, in this order:
+
+1. **A second app instance.** Horizontal scale-out is impossible while the store
+   is a local file. This binds long before write throughput does.
+2. **Ingestion width.** One writer polling thousands of symbols on a 15-second
+   tick becomes a serial bottleneck — not because SQLite is slow, but because
+   the fan-out has nowhere to go.
+3. **Multi-tenancy.** `last_viewed_at`, `surfaced_signals`, `alerts` and
+   `alert_events` are per user; the snapshot log is not. They have opposite
+   growth curves and opposite access patterns, and one file has to serve both.
+
+### Migration path
+
+The seams for this were built deliberately, and each step is independent:
+
+1. **Split the writer out.** Ingestion is already the only writer, behind
+   `snapshot-log.js` as the only module that touches the table. It becomes a
+   single ingestion service; app instances become readers.
+2. **Move the log to Postgres or a timeseries store.** `snapshot-log.js` is the
+   single seam — the append-only guarantee moves from a SQLite trigger to a
+   revoked `UPDATE`/`DELETE` grant, and every reader is unchanged. The
+   bitemporal shape (`timestamp`, `ingested_at`) is already what a timeseries
+   store wants.
+3. **Persist rolling aggregates.** Maintain mean, standard deviation and
+   trailing volume per symbol, updated on ingest, turning evaluation into an O(1)
+   read per row. Deliberately **not** built now: it introduces a second source of
+   truth to reconcile against an append-only log, plus rebuild-on-restart and
+   rebuild-on-backfill paths, for no measurable gain at this size.
+4. **Shard on user.** Everything personal is already keyed by `user_id`, so the
+   sharding boundary exists in the schema. Per-symbol features stay shared, per-user
+   state shards — the split the table above describes.
+5. **Batch the remaining per-symbol query.** Conflict detection is one query per
+   symbol; fine for a dozen rows against an indexed table, needs the same
+   batching as the history read at a thousand.
+
+Nothing in the engine changes in any of those steps. It reads features and
+returns scores; it does not know where the observations came from.
 
 ---
 
@@ -733,7 +979,8 @@ which is the shape a real conflict actually takes. Both are asserted in
 - **Yahoo is an unofficial endpoint**, and its `regularMarketVolume` fallback is
   day-cumulative rather than per-interval — which is why volume is reported as a
   ratio and why that fallback lowers confidence.
-- **One hardcoded dev user.** Every query is already scoped by `user_id`.
+- **One hardcoded dev user.** Every query is already scoped by `user_id`; there
+  is no authentication.
 - **Conflict detection is one query per symbol** — fine for a dozen rows against
   an indexed table, would need batching at a thousand.
 - **Sector map is static and small** (16 symbols). A real product takes this from
@@ -745,6 +992,5 @@ LLM integration, stock discovery or recommendations, gamification,
 authentication, a chatbot, price prediction.
 
 Price charts, intraday analysis and alerts were on this list during P0 and have
-since been scoped in deliberately — the chart, then the intraday panel and
-alerts. Everything still listed above remains out, and the scoring engine is
-still the submission.
+since been scoped in deliberately. Everything still listed above remains out,
+and the scoring engine is still the submission.

@@ -69,6 +69,31 @@ function assertValid(snapshot) {
 }
 
 export function createSnapshotLog(db) {
+  /**
+   * The variable-arity queries, cached by their SQL text.
+   *
+   * Three reads below take an `IN (?, ?, ...)` list, so their SQL depends on
+   * how many symbols were asked for and they cannot live in the fixed table
+   * beneath this. They were being recompiled on every call, which on the
+   * watchlist path means three `prepare()` calls per request while the
+   * comment below claimed statements are prepared once - so this makes that
+   * claim true for all of them.
+   *
+   * Keyed on the SQL itself rather than on a name plus a count, so a cached
+   * statement can never be handed an argument list whose length disagrees with
+   * its placeholders. The number of entries is bounded by the number of
+   * distinct watchlist sizes seen, which is bounded by the symbol count.
+   */
+  const dynamicStatements = new Map();
+  function prepared(sql) {
+    let statement = dynamicStatements.get(sql);
+    if (statement === undefined) {
+      statement = db.prepare(sql);
+      dynamicStatements.set(sql, statement);
+    }
+    return statement;
+  }
+
   // Statements are prepared once and reused. With the ingestion loop writing
   // every few seconds, re-parsing this SQL each time would be pure waste.
   const statements = {
@@ -178,17 +203,15 @@ export function createSnapshotLog(db) {
 
       const keys = symbols.map(canonicalizeSymbol);
       const placeholders = keys.map(() => '?').join(', ');
-      const rows = db
-        .prepare(
-          `SELECT * FROM (
+      const rows = prepared(
+        `SELECT * FROM (
              SELECT *, ROW_NUMBER() OVER (
                PARTITION BY symbol ORDER BY timestamp DESC, ingested_at DESC, id DESC
              ) AS rn
              FROM snapshots
              WHERE symbol IN (${placeholders})
            ) WHERE rn = 1`,
-        )
-        .all(keys);
+      ).all(keys);
 
       for (const row of rows) result.set(row.symbol, toSnapshot(row));
       return result;
@@ -220,13 +243,11 @@ export function createSnapshotLog(db) {
       for (const key of keys) result.set(key, []);
 
       const placeholders = keys.map(() => '?').join(', ');
-      const rows = db
-        .prepare(
-          `SELECT * FROM snapshots
+      const rows = prepared(
+        `SELECT * FROM snapshots
            WHERE symbol IN (${placeholders}) AND timestamp >= ? AND timestamp <= ?
            ORDER BY symbol ASC, timestamp ASC, ingested_at ASC, id ASC`,
-        )
-        .all(...keys, from, to);
+      ).all(...keys, from, to);
 
       for (const row of rows) result.get(row.symbol).push(toSnapshot(row));
       return result;
@@ -243,12 +264,10 @@ export function createSnapshotLog(db) {
 
       const keys = [...new Set(symbols.map(canonicalizeSymbol))];
       const placeholders = keys.map(() => '?').join(', ');
-      const rows = db
-        .prepare(
-          `SELECT symbol, MAX(id) AS max_id FROM snapshots
+      const rows = prepared(
+        `SELECT symbol, MAX(id) AS max_id FROM snapshots
            WHERE symbol IN (${placeholders}) GROUP BY symbol`,
-        )
-        .all(keys);
+      ).all(keys);
 
       for (const row of rows) result.set(row.symbol, row.max_id);
       return result;

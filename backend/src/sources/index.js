@@ -48,9 +48,4 @@ export function getSource(name = config.dataSource) {
   return source;
 }
 
-/** Every registered source, for endpoints that report on configuration. */
-export function listSources() {
-  return Object.values(SOURCES).map((source) => source.describe());
-}
-
 export { simulator, yahoo };

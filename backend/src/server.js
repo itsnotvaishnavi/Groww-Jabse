@@ -186,7 +186,7 @@ const server = app.listen(config.port, async () => {
  * file handle goes away.
  */
 let shuttingDown = false;
-function shutdown(signal) {
+function shutdown(signal, code = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`[server] ${signal} received, shutting down`);
@@ -194,12 +194,36 @@ function shutdown(signal) {
   ingestor?.stop();
   server.close(() => {
     closeDb();
-    process.exit(0);
+    process.exit(code);
   });
 
   // Do not hang forever on a lingering keep-alive connection.
-  setTimeout(() => process.exit(0), 5_000).unref();
+  setTimeout(() => process.exit(code), 5_000).unref();
 }
 
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+/**
+ * A crash still gets an ordered shutdown.
+ *
+ * Node's default for either of these is to print the error and exit, which is
+ * the right instinct - a process whose invariants have just been violated
+ * should not keep serving. What it skips is closing the database, so the poll
+ * timer and the WAL handle are left to the OS to reap.
+ *
+ * So these handlers do not rescue anything: they log the fault, run the same
+ * dependency-ordered shutdown as a signal, and exit non-zero. Swallowing the
+ * error and continuing would be strictly worse than crashing, because every
+ * number this app reports would then come from a process known to be in an
+ * undefined state.
+ */
+process.on('uncaughtException', (error) => {
+  console.error('[server] uncaught exception:', error);
+  shutdown('uncaughtException', 1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[server] unhandled rejection:', reason);
+  shutdown('unhandledRejection', 1);
+});

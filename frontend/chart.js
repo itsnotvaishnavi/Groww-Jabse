@@ -32,17 +32,10 @@ const RANGES = [
   { key: '1d', label: '1D' },
 ];
 
-function clockIst(timestamp) {
-  return new Date(timestamp).toLocaleTimeString('en-IN', {
-    timeZone: 'Asia/Kolkata',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
-}
-
 export function createChart(deps) {
-  const { api, inr, escapeHtml, directionClass, signed, duration } = deps;
+  // clockIst comes from app.js like every other formatter this module uses -
+  // it had been a private second copy of the identical function.
+  const { api, inr, escapeHtml, directionClass, signed, duration, clockIst } = deps;
 
   /** Which range each symbol is showing, so two open rows do not fight. */
   const selected = new Map();

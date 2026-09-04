@@ -21,6 +21,7 @@ const { createDatabase } = await import('../src/db.js');
 const { createSnapshotLog } = await import('../src/snapshot-log.js');
 const { createWatchlist, normalizeSymbol, ValidationError } = await import('../src/watchlist.js');
 const { computeDelta, NoBaselineReason } = await import('../src/delta.js');
+const { changeSinceViewed } = await import('../src/engine/features.js');
 const { assessFreshness, detectConflict, isMarketOpen, FreshnessState } = await import(
   '../src/freshness.js'
 );
@@ -208,6 +209,63 @@ test('a delta is only as trustworthy as its weaker end', () => {
     lastViewedAt: T0,
   });
   assert.equal(delta.confidence, 0.6);
+});
+
+/**
+ * TWO IMPLEMENTATIONS OF ONE QUESTION, PINNED TOGETHER.
+ *
+ * `computeDelta` predates the engine and stays in the /api/watchlist response
+ * because `delta` is part of the published contract. `changeSinceViewed` is the
+ * engine's own answer to the same question. Both ship in the same response, so
+ * if they ever disagree the API contradicts itself about the one number this
+ * product exists to report - and that had been guarded only by a comment saying
+ * they were kept in step.
+ *
+ * Every reachable case is enumerated. The one input on which they genuinely
+ * differ is a baseline price of zero (the engine reports
+ * `unusable_baseline_price`; computeDelta would divide by it), and that is
+ * unreachable: snapshot-log rejects any price <= 0 at the write boundary, which
+ * the log-invariant tests above assert.
+ */
+test('the pre-engine delta and the engine agree on every reachable case', () => {
+  const cases = {
+    never_viewed: { baseline: null, latest: snap(), lastViewedAt: null },
+    no_observation_at_last_view: { baseline: null, latest: snap(), lastViewedAt: T0 },
+    no_current_observation: { baseline: snap(), latest: null, lastViewedAt: T0 },
+    no_new_observation_since_view: {
+      baseline: snap({ timestamp: T0, price: 1400 }),
+      latest: snap({ timestamp: T0, price: 1400 }),
+      lastViewedAt: T0,
+    },
+    available: {
+      baseline: snap({ timestamp: T0, price: 1400, confidence: 0.8 }),
+      latest: snap({ timestamp: T0 + 600_000, price: 1421.37, confidence: 1 }),
+      lastViewedAt: T0 + 10,
+    },
+  };
+
+  for (const [label, input] of Object.entries(cases)) {
+    const delta = computeDelta(input);
+    const change = changeSinceViewed(input);
+
+    assert.equal(
+      delta.hasBaseline,
+      change.available,
+      `${label}: one says it has an answer and the other does not`,
+    );
+
+    if (!change.available) {
+      assert.equal(delta.reason, change.reason, `${label}: different reason for the same absence`);
+      continue;
+    }
+
+    assert.equal(delta.absolute, change.absolute, `${label}: absolute`);
+    assert.equal(delta.percent, change.percent, `${label}: percent`);
+    assert.equal(delta.spanMs, change.spanMs, `${label}: span`);
+    assert.equal(delta.confidence, change.confidence, `${label}: confidence`);
+    assert.equal(delta.from.price, change.fromPrice, `${label}: baseline price`);
+    assert.equal(delta.to.price, change.toPrice, `${label}: current price`);
+  }
 });
 
 // ----------------------------------------------------------------- freshness
