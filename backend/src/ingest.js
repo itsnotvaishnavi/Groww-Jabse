@@ -34,10 +34,18 @@ export function createIngestor({ source, snapshotLog, watchlist, intervalMs }) {
   let timer = null;
   let running = false;
 
-  /** Symbols worth polling: exactly what someone is actually watching. */
+  /**
+   * Symbols worth polling: what someone is watching, plus the benchmark.
+   *
+   * The benchmark is always polled even though nobody holds it, because the
+   * market-relative signal is worthless without it - and it has to be ingested
+   * on the same cadence as everything else, or "symbol return minus benchmark
+   * return over the same window" would be comparing two different windows.
+   */
   function symbolsToPoll() {
     const watched = watchlist.symbolsInUse();
-    return watched.length > 0 ? watched : config.defaultSymbols;
+    const base = watched.length > 0 ? watched : config.defaultSymbols;
+    return [...new Set([...base, config.benchmarkSymbol])];
   }
 
   function recordFailure(symbol, error) {

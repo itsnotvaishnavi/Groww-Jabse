@@ -10,9 +10,12 @@ import express from 'express';
 import { REPO_ROOT, config } from './config.js';
 import { createApi } from './api.js';
 import { closeDb, getDb } from './db.js';
+import { createEngine } from './engine/index.js';
+import { createSurfacedStore } from './engine/surfaced.js';
 import { assessFreshness } from './freshness.js';
 import { createIngestor } from './ingest.js';
 import { createSnapshotLog } from './snapshot-log.js';
+import { createSummaryService } from './summary.js';
 import { createWatchlist } from './watchlist.js';
 import { getSource } from './sources/index.js';
 
@@ -39,6 +42,29 @@ const ingestor = config.ingestEnabled
       intervalMs: config.ingestIntervalMs,
     })
   : null;
+
+/**
+ * The Meaningful Change Engine and its dependencies.
+ *
+ * The clock is injected even here, where it is just Date.now - so that the one
+ * and only way anything in the engine learns the time is through a seam a test
+ * can hold still. A default parameter buried three modules down would make the
+ * determinism guarantee unverifiable.
+ */
+const surfacedStore = createSurfacedStore(db);
+const engine = createEngine({
+  snapshotLog,
+  watchlist,
+  surfacedStore,
+  source,
+  clock: () => Date.now(),
+});
+const summaryService = createSummaryService({
+  engine,
+  watchlist,
+  surfacedStore,
+  clock: () => Date.now(),
+});
 
 const app = express();
 app.use(express.json());
@@ -84,7 +110,18 @@ app.get('/ready', (_req, res) => {
   });
 });
 
-app.use('/api', createApi({ snapshotLog, watchlist, source, ingestor }));
+app.use(
+  '/api',
+  createApi({
+    snapshotLog,
+    watchlist,
+    source,
+    ingestor,
+    engine,
+    summaryService,
+    surfacedStore,
+  }),
+);
 
 // The frontend is plain HTML/JS with no build step, so Express serves it
 // directly. One process, one origin, no CORS to reason about.

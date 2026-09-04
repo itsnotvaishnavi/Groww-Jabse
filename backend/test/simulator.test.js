@@ -43,8 +43,13 @@ test('the same seed replays the same sequence, byte for byte', () => {
    * different market than the one demoed. If this assertion fails, the
    * simulated history changed - which is either a bug or a deliberate change
    * that needs this constant updated on purpose.
+   *
+   * UPDATED DELIBERATELY when the market factor landed: symbol returns now
+   * decompose into beta * market + idiosyncratic, so every price in the
+   * simulated history legitimately changed. The previous value was
+   * e85f744cf29c017c.
    */
-  assert.equal(fingerprint(500), 'e85f744cf29c017c');
+  assert.equal(fingerprint(500), '123a42e61c8f5f8b');
 });
 
 test('getSnapshotAt is stable and quantised to the tick grid', async () => {

@@ -7,36 +7,19 @@
  * per user with a timestamp attached.
  */
 
-/** Marks the errors that are the caller's fault, so the API layer can map
- *  them to 400 instead of letting everything become a 500. */
-export class ValidationError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = 'ValidationError';
-  }
-}
+import { BENCHMARK_SYMBOL, ValidationError, canonicalizeSymbol, isBenchmark } from './symbols.js';
 
 /**
- * Tickers are normalised on the way in so that "reliance", "RELIANCE " and
- * "Reliance" are one watchlist entry rather than three. `&` and `-` are
- * allowed for names like M&M and BAJAJ-AUTO, and a `.NS`/`.BO` suffix is
- * permitted so a user can pin a specific exchange.
+ * Symbol identity lives in ./symbols.js - there must be exactly one definition
+ * of "which instrument is this", or the log and the watchlist drift apart.
+ * Both names are re-exported because the API layer and the tests import them
+ * from here, and `instanceof ValidationError` has to keep working across
+ * modules, which it only does if there is a single class.
  */
-export function normalizeSymbol(input) {
-  if (typeof input !== 'string') {
-    throw new TypeError('symbol must be a string');
-  }
+export { ValidationError, canonicalizeSymbol };
 
-  const symbol = input.trim().toUpperCase();
-
-  if (!/^[A-Z0-9&\-]{1,18}(\.(NS|BO))?$/.test(symbol)) {
-    throw new ValidationError(
-      `"${input}" is not a valid ticker. Use letters, digits, & or -, optionally with a .NS/.BO suffix.`,
-    );
-  }
-
-  return symbol;
-}
+/** Retained name for the canonicaliser; see ./symbols.js for the rule. */
+export const normalizeSymbol = canonicalizeSymbol;
 
 export function createWatchlist(db) {
   const statements = {
@@ -94,14 +77,33 @@ export function createWatchlist(db) {
      * `added: false` rather than an error. Re-adding is a normal thing for a
      * user to do and does not deserve a failure.
      *
+     * Because the symbol is canonicalised first, this is also what enforces
+     * one-instrument-one-entry: RELIANCE, reliance and RELIANCE.NS all collapse
+     * to the same primary key, so the second and third attempts report
+     * `added: false` instead of creating duplicate rows for one instrument.
+     * RELIANCE.BO is a different venue at a different price, so it is allowed
+     * to coexist as its own entry.
+     *
      * A new entry starts with last_viewed_at = NULL, which is meaningfully
      * different from "viewed at the moment it was added": the user has not
      * looked at it yet, so their first visit has no delta to show. Defaulting
      * it to now() would silently claim they had already seen a price.
      */
-    add(userId, symbol) {
+    add(userId, symbol, at = Date.now()) {
       const normalized = normalizeSymbol(symbol);
-      const result = statements.add.run(userId, normalized, Date.now());
+
+      /**
+       * The benchmark is ingested for everyone as the market-relative
+       * reference, not held as a watchlist row. Letting it be added would put
+       * an index in a list of instruments and make it its own benchmark.
+       */
+      if (isBenchmark(normalized)) {
+        throw new ValidationError(
+          `${BENCHMARK_SYMBOL} is tracked automatically as the market benchmark and cannot be added to a watchlist.`,
+        );
+      }
+
+      const result = statements.add.run(userId, normalized, at);
       return { symbol: normalized, added: result.changes > 0 };
     },
 

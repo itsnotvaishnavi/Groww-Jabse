@@ -20,7 +20,15 @@ import { ValidationError, normalizeSymbol } from './watchlist.js';
 const asyncHandler = (handler) => (req, res, next) =>
   Promise.resolve(handler(req, res, next)).catch(next);
 
-export function createApi({ snapshotLog, watchlist, source, ingestor }) {
+export function createApi({
+  snapshotLog,
+  watchlist,
+  source,
+  ingestor,
+  engine,
+  summaryService,
+  surfacedStore,
+}) {
   const router = express.Router();
   const sourceInfo = source.describe();
 
@@ -86,7 +94,30 @@ export function createApi({ snapshotLog, watchlist, source, ingestor }) {
       },
       ingest: ingestor?.stats() ?? null,
       log: snapshotLog.stats(),
+
+      /**
+       * The engine's parameters, published rather than buried. Every threshold
+       * and weight that decided a level is inspectable here, which is what
+       * makes the scoring auditable instead of merely explainable.
+       */
+      engine: engine
+        ? {
+            ...engine.params(),
+            sectorMap: undefined, // large and static; served by /api/sectors
+            sectors: Object.keys(config.sectorMap).length,
+          }
+        : null,
+      surfaced: surfacedStore ? surfacedStore.count(config.devUserId) : null,
     });
+  });
+
+  /** The static sector map, so the UI can explain why a peer group is what it is. */
+  router.get('/sectors', (_req, res) => {
+    const bySector = {};
+    for (const [symbol, sector] of Object.entries(config.sectorMap)) {
+      (bySector[sector] ??= []).push(symbol);
+    }
+    res.json({ minPeers: config.sectorMinPeers, bySector });
   });
 
   /** Suggestion list for the add-symbol box. Any valid ticker still works. */
@@ -94,20 +125,103 @@ export function createApi({ snapshotLog, watchlist, source, ingestor }) {
     res.json({ source: source.name, symbols: source.getSymbols() });
   });
 
+  /**
+   * The watchlist, scored.
+   *
+   * EXTENDED, NOT RESHAPED: every field the previous contract returned is
+   * still here in the same place - `latest`, `freshness`, `delta`, `conflict` -
+   * so nothing that already consumed this endpoint breaks. The engine's output
+   * is added alongside, and `delta` is retained as an alias of the engine's
+   * `changeSinceViewed` because they answer the same question and having two
+   * subtly different shapes for it would be a trap.
+   *
+   * All the arithmetic happens in the engine. The frontend renders this; it
+   * does not recompute any of it.
+   */
   router.get('/watchlist', (_req, res) => {
     const now = Date.now();
-    const entries = watchlist.list(config.devUserId);
-    const latestBySymbol = snapshotLog.latestForSymbols(entries.map((e) => e.symbol));
 
-    res.json({
-      userId: config.devUserId,
-      generatedAt: now,
+    if (!engine) {
+      // Degraded mode (engine disabled): the original contract, unchanged.
+      const entries = watchlist.list(config.devUserId);
+      const latestBySymbol = snapshotLog.latestForSymbols(entries.map((e) => e.symbol));
+      return res.json({
+        userId: config.devUserId,
+        generatedAt: now,
+        source: sourceInfo,
+        market: marketState(now),
+        items: entries.map((entry) =>
+          buildItem(entry, latestBySymbol.get(entry.symbol) ?? null, now),
+        ),
+      });
+    }
+
+    const evaluation = engine.evaluate({ userId: config.devUserId, now });
+
+    return res.json({
+      userId: evaluation.userId,
+      generatedAt: evaluation.evaluatedAt,
       source: sourceInfo,
       market: marketState(now),
-      items: entries.map((entry) =>
-        buildItem(entry, latestBySymbol.get(entry.symbol) ?? null, now),
-      ),
+      engine: evaluation.engine,
+      benchmark: evaluation.benchmark,
+      items: evaluation.items.map((item) => ({
+        symbol: item.symbol,
+        sector: item.sector,
+        addedAt: item.addedAt,
+        lastViewedAt: item.lastViewedAt,
+
+        // --- the original contract ---
+        latest: item.latest,
+        freshness: item.freshness,
+        conflict: item.conflict,
+        delta: item.changeSinceViewed,
+
+        // --- the engine ---
+        meaningfulScore: item.meaningfulScore,
+        level: item.level,
+        confidence: item.confidence,
+        confidenceComponents: item.confidenceComponents,
+        changeSinceViewed: item.changeSinceViewed,
+        reasons: item.reasons,
+        reasonText: item.reasonText,
+        features: item.features,
+        scoreBreakdown: item.scoreBreakdown,
+        availableWeight: item.availableWeight,
+        dataQuality: item.dataQuality,
+        alreadySurfaced: item.alreadySurfaced,
+        signal: item.signal,
+        observationCount: item.observationCount,
+      })),
     });
+  });
+
+  /**
+   * "Since you were away".
+   *
+   * `?awayMs=` is a dev/demo override for the time-away figure - the
+   * long-absence experience is otherwise undemonstrable without waiting two
+   * days, and a reviewer should not have to take it on trust. It changes only
+   * the reported duration and the aggregation threshold, never the scores.
+   *
+   * `?record=false` suppresses marking the presented signals as surfaced,
+   * which is what tests and repeat inspection want.
+   */
+  router.get('/summary', (req, res) => {
+    if (!summaryService) return res.status(503).json({ error: 'engine is disabled' });
+
+    const awayMs = req.query.awayMs === undefined ? null : Number(req.query.awayMs);
+    if (awayMs !== null && (!Number.isFinite(awayMs) || awayMs < 0)) {
+      throw new ValidationError('awayMs must be a non-negative number of milliseconds');
+    }
+
+    return res.json(
+      summaryService.build({
+        userId: config.devUserId,
+        awayOverrideMs: awayMs,
+        record: req.query.record !== 'false',
+      }),
+    );
   });
 
   /**

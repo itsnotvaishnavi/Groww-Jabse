@@ -4,7 +4,14 @@
  * There is no update method and no delete method. That is not an oversight -
  * the table's triggers would reject them anyway (see ./db.js). The log grows,
  * and every question about the past is a query, never a mutation.
+ *
+ * Symbols are canonicalised on write and on read (see ./symbols.js), so
+ * `RELIANCE`, `reliance` and `RELIANCE.NS` are one series rather than three.
+ * Doing it here rather than in each caller is the point: the log is the
+ * boundary, and a boundary that trusts its callers to normalise will
+ * eventually be handed something that was not.
  */
+import { canonicalizeSymbol } from './symbols.js';
 
 /** DB rows are snake_case; the rest of the app speaks camelCase. */
 function toSnapshot(row) {
@@ -128,6 +135,18 @@ export function createSnapshotLog(db) {
     return inserted;
   });
 
+  /** Validate, canonicalise the symbol, and round the numeric fields once. */
+  function toRow(snapshot, ingestedAt) {
+    assertValid(snapshot);
+    return {
+      ...snapshot,
+      symbol: canonicalizeSymbol(snapshot.symbol),
+      timestamp: Math.round(snapshot.timestamp),
+      volume: Math.round(snapshot.volume),
+      ingestedAt: snapshot.ingestedAt ?? ingestedAt,
+    };
+  }
+
   return {
     /**
      * Record one observation. Returns false when the row was a duplicate,
@@ -135,33 +154,17 @@ export function createSnapshotLog(db) {
      * "the feed repeated itself" without treating the latter as an error.
      */
     append(snapshot) {
-      assertValid(snapshot);
-      const result = statements.insert.run({
-        ...snapshot,
-        timestamp: Math.round(snapshot.timestamp),
-        volume: Math.round(snapshot.volume),
-        ingestedAt: snapshot.ingestedAt ?? Date.now(),
-      });
-      return result.changes > 0;
+      return statements.insert.run(toRow(snapshot, Date.now())).changes > 0;
     },
 
     /** Bulk append in a single transaction - used by the boot backfill. */
     appendMany(snapshots) {
       const now = Date.now();
-      const rows = snapshots.map((snapshot) => {
-        assertValid(snapshot);
-        return {
-          ...snapshot,
-          timestamp: Math.round(snapshot.timestamp),
-          volume: Math.round(snapshot.volume),
-          ingestedAt: snapshot.ingestedAt ?? now,
-        };
-      });
-      return insertMany(rows);
+      return insertMany(snapshots.map((snapshot) => toRow(snapshot, now)));
     },
 
     latest(symbol) {
-      return toSnapshot(statements.latest.get(symbol));
+      return toSnapshot(statements.latest.get(canonicalizeSymbol(symbol)));
     },
 
     /**
@@ -173,7 +176,8 @@ export function createSnapshotLog(db) {
       const result = new Map();
       if (symbols.length === 0) return result;
 
-      const placeholders = symbols.map(() => '?').join(', ');
+      const keys = symbols.map(canonicalizeSymbol);
+      const placeholders = keys.map(() => '?').join(', ');
       const rows = db
         .prepare(
           `SELECT * FROM (
@@ -184,22 +188,76 @@ export function createSnapshotLog(db) {
              WHERE symbol IN (${placeholders})
            ) WHERE rn = 1`,
         )
-        .all(symbols);
+        .all(keys);
 
       for (const row of rows) result.set(row.symbol, toSnapshot(row));
       return result;
     },
 
     asOf(symbol, timestamp) {
-      return toSnapshot(statements.asOf.get(symbol, timestamp));
+      return toSnapshot(statements.asOf.get(canonicalizeSymbol(symbol), timestamp));
     },
 
     history(symbol, { from = 0, to = Number.MAX_SAFE_INTEGER, limit = 200 } = {}) {
-      return statements.history.all(symbol, from, to, limit).map(toSnapshot);
+      return statements.history
+        .all(canonicalizeSymbol(symbol), from, to, limit)
+        .map(toSnapshot);
+    },
+
+    /**
+     * History for many symbols in ONE query, oldest first per symbol.
+     *
+     * This is what keeps the scoring engine off the N+1 path: every feature for
+     * every symbol is derived from this single result set in memory, rather
+     * than each symbol issuing its own query for each of its features. See
+     * engine/index.js for the batching contract that depends on it.
+     */
+    historyForSymbols(symbols, { from = 0, to = Number.MAX_SAFE_INTEGER } = {}) {
+      const result = new Map();
+      if (symbols.length === 0) return result;
+
+      const keys = [...new Set(symbols.map(canonicalizeSymbol))];
+      for (const key of keys) result.set(key, []);
+
+      const placeholders = keys.map(() => '?').join(', ');
+      const rows = db
+        .prepare(
+          `SELECT * FROM snapshots
+           WHERE symbol IN (${placeholders}) AND timestamp >= ? AND timestamp <= ?
+           ORDER BY symbol ASC, timestamp ASC, ingested_at ASC, id ASC`,
+        )
+        .all(...keys, from, to);
+
+      for (const row of rows) result.get(row.symbol).push(toSnapshot(row));
+      return result;
+    },
+
+    /**
+     * The highest row id currently in the log, per symbol. The engine memoises
+     * on this: if no symbol has gained an observation, nothing can have
+     * changed, so nothing needs recomputing.
+     */
+    maxIdForSymbols(symbols) {
+      const result = new Map();
+      if (symbols.length === 0) return result;
+
+      const keys = [...new Set(symbols.map(canonicalizeSymbol))];
+      const placeholders = keys.map(() => '?').join(', ');
+      const rows = db
+        .prepare(
+          `SELECT symbol, MAX(id) AS max_id FROM snapshots
+           WHERE symbol IN (${placeholders}) GROUP BY symbol`,
+        )
+        .all(keys);
+
+      for (const row of rows) result.set(row.symbol, row.max_id);
+      return result;
     },
 
     latestPerSource(symbol, since = 0) {
-      return statements.latestPerSource.all(symbol, since).map(toSnapshot);
+      return statements.latestPerSource
+        .all(canonicalizeSymbol(symbol), since)
+        .map(toSnapshot);
     },
 
     distinctSymbols() {

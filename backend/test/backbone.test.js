@@ -117,7 +117,16 @@ test('latestForSymbols answers for many symbols in one query', () => {
 test('symbols are normalised, and nonsense is rejected', () => {
   assert.equal(normalizeSymbol('  reliance '), 'RELIANCE');
   assert.equal(normalizeSymbol('m&m'), 'M&M');
-  assert.equal(normalizeSymbol('reliance.ns'), 'RELIANCE.NS');
+
+  /**
+   * This assertion previously expected 'RELIANCE.NS' - it was encoding the
+   * canonicalisation bug rather than testing correct behaviour. NSE is the
+   * implied venue, so its suffix is redundant and now collapses; BSE is a
+   * different venue at a different price and stays distinct. The full matrix
+   * is covered in symbols.test.js.
+   */
+  assert.equal(normalizeSymbol('reliance.ns'), 'RELIANCE');
+  assert.equal(normalizeSymbol('reliance.bo'), 'RELIANCE.BO');
 
   for (const bad of ['', '   ', 'A B', 'DROP TABLE', 'TOOLONGSYMBOLNAMEHERE', '<script>']) {
     assert.throws(() => normalizeSymbol(bad), ValidationError, `should reject ${bad}`);
@@ -361,7 +370,12 @@ test('an absent observation is data, not an error', async () => {
   await ingestor.tick();
   const stats = ingestor.stats();
 
-  assert.equal(stats.absences, 1);
+  /**
+   * Two absences for one watched symbol, because the benchmark is polled on
+   * every tick regardless of whether anyone holds it - the market-relative
+   * signal needs it on the same cadence as everything else.
+   */
+  assert.equal(stats.absences, 2);
   assert.equal(stats.failures, 0, 'a dropped tick is not an incident');
   assert.equal(log.stats().snapshots, 0, 'and no price was invented to fill it');
 });

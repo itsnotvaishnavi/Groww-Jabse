@@ -14,6 +14,8 @@
  * the instant we fetched it), and `confidence` is capped well below 1. See
  * ../freshness.js for how that is surfaced to the user.
  */
+import { BENCHMARK_SYMBOL, canonicalizeSymbol } from '../symbols.js';
+
 const BASE_URL = 'https://query1.finance.yahoo.com/v8/finance/chart';
 const REQUEST_TIMEOUT_MS = 8_000;
 
@@ -39,33 +41,42 @@ const CONFIDENCE = { LATEST: 0.6, HISTORICAL: 0.85 };
 /** Applied when the nearest candle is not actually near the instant asked for. */
 const DISTANCE_PENALTY = 0.7;
 
+/** Yahoo's name for the NIFTY 50 index. */
+const YAHOO_BENCHMARK = '^NSEI';
+
 /**
- * Unsuffixed tickers are assumed NSE, which is the default an Indian user
- * means by "RELIANCE". An explicit .NS/.BO suffix is passed through, so BSE is
- * reachable by asking for it.
+ * Canonical key -> Yahoo's wire symbol.
+ *
+ * The canonical form has no NSE suffix because NSE is implied (see
+ * ../symbols.js), but Yahoo needs it explicitly, so it is added back here.
+ * `.BO` passes through, and the benchmark becomes `^NSEI`. This is the only
+ * place in the codebase that knows any of that.
  */
 export function toYahooSymbol(symbol) {
-  const upper = symbol.trim().toUpperCase();
-  return /\.(NS|BO)$/.test(upper) ? upper : `${upper}.NS`;
+  const canonical = canonicalizeSymbol(symbol);
+  if (canonical === BENCHMARK_SYMBOL) return YAHOO_BENCHMARK;
+  return canonical.endsWith('.BO') ? canonical : `${canonical}.NS`;
 }
 
 /**
- * The symbol a snapshot is filed under is the one the caller asked for, not the
- * one sent upstream.
+ * The symbol a snapshot is filed under is its canonical key, never the wire
+ * symbol.
  *
- * This matters more than it looks. Stripping the suffix on the way back would
- * file RELIANCE.BO observations under RELIANCE - so a user watching the BSE
- * listing would never match their own data, *and* their BSE prices would
- * silently contaminate the NSE series (and then show up as a source conflict
- * with itself). Round-tripping the caller's key keeps the log and the watchlist
- * addressing the same thing.
+ * This matters more than it looks. Handing back Yahoo's spelling would file
+ * RELIANCE.NS observations separately from RELIANCE - the exact bug that
+ * canonicalisation exists to prevent - while stripping `.BO` would instead
+ * merge BSE prices into the NSE series and then report the result as a source
+ * conflict with itself. One canonical key on both sides keeps the log and the
+ * watchlist addressing the same instrument.
  */
 function callerSymbol(symbol) {
-  return symbol.trim().toUpperCase();
+  return canonicalizeSymbol(symbol);
 }
 
 async function fetchChart(params) {
-  const url = `${BASE_URL}/${params.symbol}?${params.query}`;
+  // encodeURIComponent matters for the benchmark: a raw `^` in a URL path is
+  // not something to rely on a server tolerating.
+  const url = `${BASE_URL}/${encodeURIComponent(params.symbol)}?${params.query}`;
 
   let response;
   try {
@@ -191,6 +202,8 @@ export const yahoo = {
       delayMs: 20 * 60_000,
       endpoint: `${BASE_URL}/{symbol}.NS`,
       note: 'Unofficial endpoint. Quotes typically delayed 15-20 minutes.',
+      /** The benchmark this source can serve, for the ingestor to poll. */
+      benchmarkSymbol: BENCHMARK_SYMBOL,
     };
   },
 

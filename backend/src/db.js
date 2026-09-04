@@ -70,6 +70,40 @@ CREATE TABLE IF NOT EXISTS watchlist (
   last_viewed_at INTEGER,
   PRIMARY KEY (user_id, symbol)
 );
+
+-- Which signals have already been shown to which user.
+--
+-- Without this, a restart makes every ongoing change look like a brand-new
+-- discovery, and the "3 things deserve your attention" summary re-announces
+-- the same move every time the process comes up. That is the difference
+-- between a product that remembers what it told you and one that shouts.
+--
+-- The fingerprint identifies the underlying EVENT rather than the exact score
+-- (see engine/surfaced.js): level, reason set, direction and a coarse
+-- magnitude bucket. So an ongoing move stays surfaced as it drifts, while a
+-- materially larger move is a new event and fires again.
+--
+-- The epoch column is the user's last_viewed_at at the time of surfacing.
+-- "Mark seen" therefore starts a fresh epoch and everything may legitimately
+-- surface once more - which is correct, because the user has explicitly said
+-- they have absorbed the current state.
+--
+-- Deliberately mutable, unlike snapshots: this is a record of what we did, not
+-- an observation about the market.
+CREATE TABLE IF NOT EXISTS surfaced_signals (
+  user_id           TEXT    NOT NULL,
+  symbol            TEXT    NOT NULL,
+  fingerprint       TEXT    NOT NULL,
+  level             TEXT    NOT NULL,
+  epoch             INTEGER NOT NULL,
+  first_surfaced_at INTEGER NOT NULL,
+  last_surfaced_at  INTEGER NOT NULL,
+  surface_count     INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (user_id, symbol, fingerprint)
+);
+
+CREATE INDEX IF NOT EXISTS surfaced_user_symbol
+  ON surfaced_signals (user_id, symbol);
 `;
 
 /**
