@@ -35,3 +35,10 @@ test('raw observation audit is behind analysis disclosure', () => {
   assert.match(detail, /<div class="audit__observations"><\/div>/);
   assert.doesNotMatch(detail, /Every observation behind this price/);
 });
+
+test('alert diagnostics are behind a collapsed disclosure', () => {
+  const panels = fs.readFileSync(path.join(root, 'frontend', 'panels.js'), 'utf8');
+  assert.match(panels, /<details class="alert-diagnostics">/);
+  assert.match(panels, /Why wasn't I alerted\?/);
+  assert.match(panels, /diagnosisMarkup/);
+});

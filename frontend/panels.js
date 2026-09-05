@@ -276,9 +276,12 @@ export function createPanels(deps) {
       container.innerHTML =
         alertFormMarkup(symbol, mine) +
         (mine.length
-          ? `<div class="dg__list">${mine
-              .map((a) => diagnosisMarkup(byId.get(a.id)))
-              .join('')}</div>`
+          ? `<details class="alert-diagnostics">
+              <summary>Why wasn't I alerted?</summary>
+              <div class="dg__list">${mine
+                .map((a) => diagnosisMarkup(byId.get(a.id)))
+                .join('')}</div>
+            </details>`
           : '');
     } catch (error) {
       container.innerHTML = `<p class="ip__note">Could not load alerts: ${escapeHtml(

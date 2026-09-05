@@ -52,6 +52,7 @@ export function createApi({
   newsService,
   explanationService,
   discoveryService,
+  instrumentCatalogue,
 }) {
   const router = express.Router();
   const sourceInfo = source.describe();
@@ -217,8 +218,8 @@ export function createApi({
       const query = String(req.query.q ?? '').trim();
       if (!query) throw new ValidationError('Type a ticker or company name to search.');
 
-      const raw = source.searchSymbols
-        ? await source.searchSymbols(query)
+      const raw = instrumentCatalogue
+        ? instrumentCatalogue.search(query, 20)
         : source.getSymbols().filter((entry) => entry.symbol.toLowerCase().includes(query.toLowerCase()));
       const seen = new Set();
       const results = raw.filter((entry) => {

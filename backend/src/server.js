@@ -21,6 +21,7 @@ import { createWatchlist } from './watchlist.js';
 import { createNewsService } from './news.js';
 import { createExplanationService, createOpenAiCompatibleProvider } from './explanation.js';
 import { createDiscoveryService } from './discovery.js';
+import { createInstrumentCatalogue } from './catalogue.js';
 import { getSource } from './sources/index.js';
 
 const STARTED_AT = Date.now();
@@ -30,6 +31,11 @@ const snapshotLog = createSnapshotLog(db);
 const watchlist = createWatchlist(db);
 const source = getSource();
 const sourceInfo = source.describe();
+const instrumentCatalogue = createInstrumentCatalogue({
+  source,
+  cachePath: path.join(REPO_ROOT, 'data', 'instrument-catalogue.json'),
+});
+await instrumentCatalogue.loadCache();
 
 // A first-run watchlist, so the page has something on it before the user has
 // typed anything. Existing watchlists are left alone.
@@ -166,12 +172,19 @@ app.use(
     newsService,
     explanationService,
     discoveryService,
+    instrumentCatalogue,
   }),
 );
 
 // The frontend is plain HTML/JS with no build step, so Express serves it
 // directly. One process, one origin, no CORS to reason about.
 app.use(express.static(path.join(REPO_ROOT, 'frontend')));
+
+if (source.name === 'yahoo') {
+  void instrumentCatalogue.refresh().catch((error) =>
+    console.error('[catalogue] refresh failed:', error.message),
+  );
+}
 
 const server = app.listen(config.port, async () => {
   console.log(`[server] listening on http://localhost:${config.port}`);

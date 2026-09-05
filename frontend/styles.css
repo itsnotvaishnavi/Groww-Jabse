@@ -2245,6 +2245,27 @@ select:focus-visible {
   font-size: var(--fs-xs);
 }
 
+.alert-diagnostics {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.alert-diagnostics > summary {
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+.alert-diagnostics > summary:hover {
+  color: var(--green);
+}
+
+.alert-diagnostics[open] > summary {
+  color: var(--text);
+}
+
 /* ===================== why wasn't I alerted? (diagnosis) ================= */
 
 .dg__list {
