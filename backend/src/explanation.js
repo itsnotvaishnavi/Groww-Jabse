@@ -21,12 +21,9 @@ function companyTokens(company, symbol) {
 }
 
 function relatedNewsFor({ symbol, company, newsItems = [] }) {
-  const tokens = companyTokens(company, symbol);
-  return newsItems.filter((item) => {
-    if (item.associatedSymbol !== symbol) return false;
-    const headline = String(item.headline ?? '').toLowerCase();
-    return tokens.some((token) => headline.includes(token));
-  });
+  // News service filtering has already required strong provider/company
+  // evidence. Do not apply a second weaker substring filter here.
+  return newsItems.filter((item) => item.associatedSymbol === symbol && item.relevance >= 8);
 }
 
 function changeEvidence(change) {

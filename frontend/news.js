@@ -1,6 +1,6 @@
 export function createNews({ api, escapeHtml, whenIst, ago }) {
   const renderItems = (items) => {
-    if (!items.length) return '<p class="news__empty">No recent news found for this context.</p>';
+    if (!items.length) return '<p class="news__empty">No major related news found.</p>';
 
     return `<div class="news-grid">${items
       .map(
@@ -8,8 +8,8 @@ export function createNews({ api, escapeHtml, whenIst, ago }) {
           <div class="news-card__meta">
             <span>${escapeHtml(item.source)}</span>
             <time datetime="${new Date(item.publishedAt).toISOString()}" title="${escapeHtml(
-              whenIst(item.publishedAt),
-            )} IST">${escapeHtml(ago(Date.now() - item.publishedAt))}</time>
+                whenIst(item.publishedAt),
+              )} IST">${escapeHtml(ago(Date.now() - item.publishedAt))}</time>
           </div>
           <h3 class="news-card__title">${
             item.url

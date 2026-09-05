@@ -46,7 +46,7 @@ if (seeded.length > 0) {
 
 const surfacedStore = createSurfacedStore(db);
 const alertStore = createAlertStore(db, config.alerts);
-const newsService = createNewsService();
+const newsService = createNewsService({ source });
 
 /**
  * Alerts are evaluated on every ingestion tick, because that is the moment a

@@ -59,6 +59,7 @@ const related = {
   publishedAt: 1_799_999_000_000,
   url: 'https://example.test/tcs',
   associatedSymbol: 'TCS',
+  relevance: 10,
 };
 
 const unrelated = {
