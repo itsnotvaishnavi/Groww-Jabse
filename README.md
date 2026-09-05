@@ -90,10 +90,10 @@ number of indicators on screen. Adding twenty more indicators would make it a
 worse version of a tool that already exists; making the personal baseline
 first-class is the thing nothing else does.
 
-That is also why there is no discovery, no recommendation, no screening across
-the market, and no gamification. Each is listed under
-[Deliberately out of scope](#deliberately-out-of-scope) as a decision with a
-reason, not a gap.
+That is also why there is no market-wide screener, recommendation, or
+gamification. Jabse has a small watchlist-discovery surface, documented below,
+but it only surfaces source-known candidates with relevant existing watchlist
+interest and meaningful current activity; it is not investment advice.
 
 ---
 
@@ -1288,8 +1288,8 @@ interesting part of that problem.
 
 ## Deliberately out of scope
 
-LLM integration, stock discovery or recommendations, gamification,
-authentication, a chatbot, price prediction.
+market-wide stock recommendations, a screener, gamification, authentication,
+a chatbot, price prediction.
 
 Price charts, intraday analysis and alerts were on this list during P0 and have
 since been scoped in deliberately. Everything still listed above remains out,
