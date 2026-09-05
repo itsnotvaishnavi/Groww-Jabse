@@ -687,6 +687,31 @@ select:focus-visible {
   min-width: 200px;
 }
 
+.wl th.trend-heading,
+.wl td.trend-cell {
+  width: 150px;
+  min-width: 150px;
+}
+
+.trend-cell {
+  text-align: left;
+}
+
+.trend-slot {
+  width: 132px;
+  height: 36px;
+}
+
+.sparkline {
+  display: block;
+  width: 132px;
+  height: 36px;
+}
+
+.sparkline__line--up { stroke: var(--green); }
+.sparkline__line--down { stroke: var(--red); }
+.sparkline__line--flat { stroke: var(--text-faint); }
+
 .wl th:last-child {
   width: 1%;
 }
@@ -2419,5 +2444,10 @@ select:focus-visible {
   /* The table scrolls rather than crushing its columns. */
   .wl {
     min-width: 700px;
+  }
+
+  .wl th.trend-heading,
+  .wl td.trend-cell {
+    display: none;
   }
 }

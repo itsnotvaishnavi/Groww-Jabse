@@ -16,6 +16,7 @@ import { createPanels } from './panels.js';
 import { createNews } from './news.js';
 import { createSearch } from './search.js';
 import { createExplanation } from './explanation.js';
+import { createSparkline } from './sparkline.js';
 import { DEFAULT_SENSITIVITY, SENSITIVITY, displayGroupFor } from './sensitivity.js';
 
 const POLL_INTERVAL_MS = 5_000;
@@ -192,6 +193,7 @@ async function api(path, options) {
 
 const news = createNews({ api, escapeHtml, whenIst, ago });
 const explanation = createExplanation({ api, escapeHtml, signed, whenIst, ago });
+const sparkline = createSparkline({ api });
 const search = createSearch({
   api,
   input: el.input,
@@ -276,7 +278,7 @@ function conflictRow(item) {
     ? ` Showing <strong>${escapeHtml(conflict.preferred)}</strong> as the higher-confidence source.`
     : ' Neither source is more confident, so neither is preferred.';
 
-  return node(`<tr class="wl__audit"><td colspan="5">
+  return node(`<tr class="wl__audit"><td colspan="6">
     <p class="conflict">
       <strong>Sources disagree by ${conflict.spreadPct}%</strong>
       (tolerance ${conflict.tolerancePct}%): ${detail}.${preferred}
@@ -435,6 +437,7 @@ function renderRow(item) {
           </div>
         </div>
       </td>
+      <td class="trend-cell"><div class="trend-slot" aria-label="Loading intraday trend"></div></td>
       <td class="num">
         <div class="price">${latest ? `₹${inr.format(latest.price)}` : '—'}</div>
         <div class="price__state">${freshnessPill(freshness)}</div>
@@ -456,6 +459,8 @@ function renderRow(item) {
   row.querySelector('[data-action="explain"]')?.addEventListener('click', () => {
     void explanation.open(item.symbol);
   });
+
+  void sparkline.load(row.querySelector('.trend-slot'), item.symbol);
 
   row.querySelector('[data-action="remove"]').addEventListener('click', async () => {
     await api(`/watchlist/${encodeURIComponent(item.symbol)}`, { method: 'DELETE' });
@@ -678,7 +683,7 @@ function slotsFor(symbol) {
 
 function detailRow(item) {
   const row = node(
-    `<tr class="wl__audit"><td colspan="5" class="audit">
+    `<tr class="wl__audit"><td colspan="6" class="audit">
        <div class="chart-slot"></div>
       <div class="stock-news-slot"></div>
        <div class="row-actions">
@@ -1053,7 +1058,7 @@ function groupHeaderRow(group, count) {
     group.key === 'needs_attention' ? SENSITIVITY[sensitivity].note : null;
 
   return node(
-    `<tr class="wl__group wl__group--${group.tone}"><td colspan="5">
+    `<tr class="wl__group wl__group--${group.tone}"><td colspan="6">
        <span class="wl__group-label">${escapeHtml(group.label)}</span>
        <span class="wl__group-count">${count}</span>
        <span class="wl__group-note">${escapeHtml(sensitivityNote ?? group.note)}</span>

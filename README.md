@@ -6,7 +6,8 @@ A watchlist that answers **"what has meaningfully changed *since I last looked*"
 rather than "what moved today".
 
 Built for Groww "Code" — solo build, Sep 4–7 2026. Two runtime dependencies,
-no build step, no API keys.
+no build step. The core app needs no API keys; an optional OpenAI-compatible key
+enables contextual movement explanations.
 
 **Run it:** `npm install && npm start` → <http://localhost:3000>. Full setup in
 [Setup](#setup).
@@ -59,9 +60,9 @@ answers a narrower question: what meaningfully changed since I last checked?**
 
 Everything follows from taking that question literally:
 
-- **The baseline is explicit.** Only an action by the user — "Mark seen", "Mark
-  all as seen" — moves the point they are comparing from. Loading a page,
-  polling, opening a row or refreshing never does.
+- **The baseline is explicit.** Only an explicit action that opens a stock's
+  detail view moves the point they are comparing from. Loading a page, polling,
+  scrolling, showing a ticker or refreshing never does.
 - **Historical observations are immutable.** The snapshot log is append-only and
   the database enforces it, so a price the user has already seen cannot be
   rewritten under them.
@@ -71,8 +72,9 @@ Everything follows from taking that question literally:
 - **Data quality is part of the result, not a footnote.** Every score ships with
   a confidence, every price with a freshness state, and "we could not measure
   this" is a first-class answer that changes the arithmetic.
-- **Explanations are evidence.** Every sentence is a template over a number the
-  system holds and can show you. There is no LLM anywhere in the path.
+- **Explanations are evidence.** Deterministic Jabse reasons remain the source
+  of truth. An optional AI layer can add short context for attention-worthy
+  moves with relevant news, but never changes a score or level.
 
 ### Why this is not a screener
 
@@ -306,9 +308,9 @@ evaluate all stand, because the data really is old. That is what makes the
 
 ### `last_viewed_at` semantics
 
-Written **only** by an explicit "Mark seen" or "Mark all as seen". Never as a
-side effect of loading a page, rendering, polling, opening a symbol, expanding
-its details, or refreshing. If a read consumed it, every delta would erase
+Written **only** when the user explicitly opens a stock's detail view. Never as
+a side effect of loading a page, rendering a row, polling, scrolling, showing a
+ticker, hovering, or refreshing. If a read consumed it, every delta would erase
 itself on first render and could never be revisited.
 
 A new watchlist entry starts at `NULL`, which is meaningfully different from
@@ -356,22 +358,16 @@ account.
 Loading it does not consume `last_viewed_at`, so the summary survives being
 read.
 
-### Mark seen, mark all as seen, and being caught up
+### Opening a stock and being caught up
 
-**Mark Seen resets the user's comparison baseline, not market history.**
+**Opening a stock resets that stock's comparison baseline, not market history.**
 
-That sentence is the product. Marking seen moves `last_viewed_at` — the point
-future change is measured *from* — and touches nothing else. It writes no
+That sentence is the product. Opening a detail view moves `last_viewed_at` — the
+point future change is measured *from* — and touches nothing else. It writes no
 snapshot, deletes none, and rewrites none; the log's `BEFORE UPDATE` and
 `BEFORE DELETE` triggers would abort the attempt if it tried. Every observation
-the app ever made is still there afterwards, and there is a test that compares
-the log byte for byte across a mark to prove it.
-
-"Mark all as seen" stamps every symbol at **one instant, in one transaction**.
-Per-row `Date.now()` calls would leave the rows milliseconds apart, and "how
-long were you away" is the *minimum* `last_viewed_at` across the watchlist — so
-a partial write would silently anchor the next visit to whichever row happened
-to go first.
+the app ever made is still there afterwards. Adjacent cards, visible rows, and
+the ticker do not mark anything seen.
 
 Afterwards the app says so explicitly: **"You're all caught up. Jabse will
 watch what changes next."** That state is computed server-side beside the counts
@@ -381,7 +377,8 @@ it persists for precisely as long as it remains true. It is deliberately strict:
 every symbol must have a baseline, nothing may have moved since those baselines,
 and nothing may be asking for attention. A symbol never marked seen blocks it,
 because "caught up" is a claim about a comparison, and for that symbol no
-comparison exists yet.
+comparison exists yet. The UI asks the user to open a stock rather than press a
+separate acknowledgement control.
 
 ### Attention grouping
 
@@ -477,7 +474,27 @@ scoring, no search service.
 Motors; picking one would put the wrong stock on someone's watchlist, so the
 candidates come back and the user picks. Input that is still ticker-shaped but
 unlisted passes through, because `getSymbols()` returns a featured handful while
-Yahoo knows thousands.
+Yahoo knows thousands. The search UI uses the active source's discovery path and
+shows ticker, company name, and exchange when available. Yahoo uses its search
+endpoint for a broader universe; the simulator stays offline and deterministic,
+with featured names plus stable synthetic aliases for cross-market examples.
+Selected results use the same canonical identity as market data and the existing
+watchlist API.
+
+### Supporting news and contextual explanation
+
+The optional **Latest News** surface is supporting context, not the product's
+primary ranking. Related headlines can appear in a stock's detail view and in
+the general news section, but unrelated or unverified headlines are not
+attributed to a symbol.
+
+For an attention-worthy move with relevant news, an optional OpenAI-compatible
+provider can produce a short explanation through `/api/explanation/:symbol`.
+The provider receives compact, structured engine evidence rather than raw
+database data. It can phrase context, but it cannot decide meaningfulness,
+attention, confidence, ranking, alerts, or baselines. With no major relevant
+news, Jabse shows at most two deterministic evidence lines and does not invoke
+AI. Provider or news failure leaves the watchlist and engine working.
 
 ### Ingestion heartbeat
 
@@ -675,10 +692,12 @@ before the end, outside the engine's fifteen-minute anomaly horizon, so it score
 | `GET` | `/api/meta` | Source, config, engine parameters, pipeline health |
 | `GET` | `/api/sectors` | The static sector map |
 | `GET` | `/api/symbols` | Suggestion list |
+| `GET` | `/api/symbols/search?q=` | Active-source company/security discovery |
+| `GET` | `/api/news` | Optional supporting news (`?symbol=&limit=`) |
+| `GET` | `/api/explanation/:symbol` | Optional contextual explanation for an attention-worthy move |
 | `POST` | `/api/watchlist` | Add (`201` new, `200` already present) |
 | `DELETE` | `/api/watchlist/:symbol` | Remove (history is kept) |
-| `POST` | `/api/watchlist/:symbol/viewed` | Stamp "I have now seen this" |
-| `POST` | `/api/watchlist/viewed-all` | Mark all as seen: one baseline instant for every symbol |
+| `POST` | `/api/watchlist/:symbol/viewed` | Stamp the baseline when a detail view is explicitly opened |
 | `GET` | `/api/history` | Change history (`?level=HIGH\|MODERATE`, `?limit=`) |
 | `GET` | `/api/snapshots/:symbol` | Raw log — the audit trail |
 | `POST` | `/api/ingest/tick` | Force a poll now (demo affordance) |
@@ -719,13 +738,29 @@ recompute — no threshold, weight or level boundary appears anywhere in
 ```bash
 npm install
 npm start                 # http://localhost:3000
-npm test                  # 217 tests, no network / clock / filesystem
+npm test                  # full deterministic suite, no network / clock / filesystem
 npm run demo              # the full fixture
 npm run demo -- stock_outperforms 6h    # a named scenario
 ```
 
-Requires Node 22+ (developed on 24). No API keys, no configuration file, no
-migration step. The database is created on first boot.
+Requires Node 22+ (developed on 24). No API key is needed for the core app, no
+configuration file or migration step is required, and the database is created
+on first boot.
+
+### Optional contextual AI
+
+Set these environment variables to enable the short explanation layer:
+
+```bash
+AI_API_KEY=... npm start
+# Optional overrides:
+AI_ENDPOINT=https://api.openai.com/v1/chat/completions
+AI_MODEL=gpt-4o-mini
+```
+
+Without `AI_API_KEY`, the app still shows deterministic Jabse evidence and
+related verified news. AI output never feeds back into the meaningful-change
+engine.
 
 ### The Yahoo switch
 
@@ -1021,8 +1056,8 @@ persistence, a restart turns every ongoing move back into breaking news.
 The fingerprint identifies the **event**: symbol, level, sorted reason codes,
 direction, a 1% magnitude bucket, and the viewing epoch. Keying on the score
 would refire every tick; keying on the symbol alone would never refire, so a
-move growing from 2% to 9% would stay silent. Pressing "Mark seen" starts a new
-epoch, so after the user explicitly acknowledges the state, the next change is
+move growing from 2% to 9% would stay silent. Opening the stock starts a new
+viewing epoch, so after the user explicitly opens it again, the next change is
 legitimately new again.
 
 ### The conflict fixture is constructed, and labelled as such
