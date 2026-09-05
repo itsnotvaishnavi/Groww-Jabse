@@ -30,6 +30,7 @@ const el = {
   refreshNow: document.getElementById('refresh-now'),
   markAllSeen: document.getElementById('mark-all-seen'),
   sensitivity: document.getElementById('sensitivity-select'),
+  historySection: document.getElementById('history-section'),
   historyChips: document.getElementById('history-chips'),
   historyBody: document.getElementById('history-body'),
   tbody: document.getElementById('watchlist'),
@@ -421,7 +422,6 @@ function renderRow(item) {
           freshness.ageMs == null ? 'no data' : ago(freshness.ageMs)
         }</div>
         <div class="price__state">${freshnessPill(freshness)}</div>
-        ${latest ? `<div class="conf">source confidence ${latest.confidence}</div>` : ''}
       </td>
       <td class="num">${deltaCell(item)}</td>
       <td>${whyCell(item)}</td>
@@ -542,7 +542,22 @@ function detailPanel(item) {
 
   const change = f.changeSinceViewed;
 
+  const reasonsList = (item.reasonText && item.reasonText.length > 0)
+    ? `<ul class="detail__evidence-list">
+        ${item.reasonText.map((t) => `<li>${escapeHtml(t)}</li>`).join('')}
+       </ul>`
+    : `<p class="detail__evidence-none">No abnormal move detected. All measured signals remained within standard statistical bounds.</p>`;
+
+  const evidenceOverview = `<div class="detail__evidence">
+    <div class="detail__evidence-head">
+      <span class="detail__evidence-badge level level--${escapeHtml(item.level)}">${escapeHtml(item.level)} ATTENTION</span>
+      <span class="detail__evidence-title">Why this stock is surfaced</span>
+    </div>
+    ${reasonsList}
+  </div>`;
+
   return `<div class="detail">
+    ${evidenceOverview}
     ${formula}
 
     <div class="detail__block">
@@ -605,7 +620,6 @@ function detailPanel(item) {
       }
       ${kv('observations in window', String(item.observationCount))}
       ${kv('already surfaced', item.alreadySurfaced ? 'yes' : 'no')}
-      ${kv('signal fingerprint', item.signal.fingerprint)}
     </div>
   </div>`;
 }
@@ -817,10 +831,12 @@ function renderStatus(payload) {
   el.sourcePill.className = `pill pill--${source.kind === 'synthetic' ? 'delayed' : 'live'}`;
   el.sourcePill.textContent =
     source.kind === 'synthetic'
-      ? `simulated · seed ${source.seed}`
+      ? 'Simulated data'
       : `${source.name} · delayed ~${Math.round(source.delayMs / 60_000)}m`;
   el.sourcePill.title =
-    source.note ?? 'Deterministic synthetic market: the same seed always replays the same prices.';
+    source.kind === 'synthetic'
+      ? `Deterministic synthetic market (seed: ${source.seed})`
+      : (source.note ?? 'Live market data feed.');
 
   const marketLine = !market.appliesToSource
     ? 'Exchange hours not applicable — the simulated market runs continuously so the app is demonstrable while NSE/BSE are closed.'
@@ -902,21 +918,13 @@ function renderLogCard(meta) {
     <div class="kv"><span class="kv__k">Observations</span><span class="kv__v">${log.snapshots.toLocaleString(
       'en-IN',
     )}</span></div>
-    <div class="kv"><span class="kv__k">Oldest</span><span class="kv__v">${
+    <div class="kv"><span class="kv__k">Oldest data</span><span class="kv__v">${
       log.oldestTimestamp ? ago(Date.now() - log.oldestTimestamp) : '—'
     }</span></div>
-    <div class="kv"><span class="kv__k">Poll every</span><span class="kv__v">${
+    <div class="kv"><span class="kv__k">Update frequency</span><span class="kv__v">every ${
       config.ingestIntervalMs / 1000
     }s</span></div>
-    <div class="kv"><span class="kv__k">Written / dupes</span><span class="kv__v">${
-      ingest?.written ?? 0
-    } / ${ingest?.duplicates ?? 0}</span></div>
-    <div class="kv"><span class="kv__k">Absences</span><span class="kv__v">${
-      ingest?.absences ?? 0
-    }</span></div>
-    <div class="kv"><span class="kv__k">Failures</span><span class="kv__v ${
-      (ingest?.failures ?? 0) > 0 ? 'down' : ''
-    }">${ingest?.failures ?? 0}</span></div>
+    ${(ingest?.failures ?? 0) > 0 ? `<div class="kv"><span class="kv__k">Failures</span><span class="kv__v down">${ingest.failures}</span></div>` : ''}
     <p class="card__note">
       The log is append-only — SQLite triggers reject UPDATE and DELETE, so a price you have
       already seen can never be rewritten.${
@@ -1088,6 +1096,10 @@ async function loadHistory() {
   try {
     const query = historyLevel ? `?level=${encodeURIComponent(historyLevel)}` : '';
     const { events, counts } = await api(`/history${query}`);
+    if (el.historySection) {
+      el.historySection.hidden = (counts.all === 0);
+    }
+    if (counts.all === 0) return;
 
     for (const chip of el.historyChips.querySelectorAll('.chip[data-history]')) {
       const key = chip.dataset.history;
@@ -1263,6 +1275,9 @@ function renderAway(summary) {
    * it survives a refresh instead of being a toast that vanishes.
    */
   if (summary.caughtUp) {
+    const timeRef = summary.away?.since ? ` since ${clockIst(summary.away.since)} IST` : '';
+    const stockCount = summary.counts?.watched ?? (lastPayload?.items?.length ?? 0);
+    const countLabel = stockCount > 0 ? `${stockCount} stock${stockCount === 1 ? '' : 's'} checked · ` : '';
     el.awaySignals.innerHTML = `
       <div class="caught-up">
         <svg class="caught-up__tick" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -1272,7 +1287,7 @@ function renderAway(summary) {
         </svg>
         <div>
           <p class="caught-up__head">You're all caught up.</p>
-          <p class="caught-up__sub">Jabse will watch what changes next.</p>
+          <p class="caught-up__sub">${countLabel}No meaningful changes${timeRef}. Jabse will watch what changes next.</p>
         </div>
         <button type="button" class="btn" data-action="to-watchlist">Back to watchlist</button>
       </div>`;
@@ -1354,8 +1369,14 @@ function renderSuggestions() {
     ...featured.map(({ symbol, name }) => {
       const button = document.createElement('button');
       button.type = 'button';
-      button.textContent = symbol;
-      button.title = name;
+      button.className = 'suggest__btn';
+      const venue = symbol.endsWith('.BO') ? 'BSE' : 'NSE';
+      button.innerHTML = `
+        <span class="suggest__sym">${escapeHtml(symbol)}</span>
+        <span class="suggest__name">${escapeHtml(name)}</span>
+        <span class="suggest__venue">${venue}</span>
+      `;
+      button.title = `${name} (${venue})`;
       button.disabled = watched.has(symbol);
       button.addEventListener('click', () => addSymbol(symbol));
       return button;

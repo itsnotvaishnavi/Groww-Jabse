@@ -719,7 +719,7 @@ recompute — no threshold, weight or level boundary appears anywhere in
 ```bash
 npm install
 npm start                 # http://localhost:3000
-npm test                  # 216 tests, no network / clock / filesystem
+npm test                  # 217 tests, no network / clock / filesystem
 npm run demo              # the full fixture
 npm run demo -- stock_outperforms 6h    # a named scenario
 ```
@@ -780,7 +780,7 @@ Everything lives in [config.js](backend/src/config.js); nothing else reads
 ### Tests
 
 ```bash
-npm test    # 216 tests
+npm test    # 217 tests
 ```
 
 No network, no filesystem, no uncontrolled clock — in-memory SQLite, stub
