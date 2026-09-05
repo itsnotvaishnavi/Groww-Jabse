@@ -43,7 +43,7 @@ export const BENCHMARK_SYMBOL = 'NIFTY';
 const BENCHMARK_ALIASES = new Set(['NIFTY', 'NIFTY50', '^NSEI', 'NSEI', 'MARKET']);
 
 /** Letters, digits, & and - (M&M, BAJAJ-AUTO), optionally a venue suffix. */
-const TICKER = /^[A-Z0-9&\-]{1,18}(\.(NS|BO))?$/;
+const TICKER = /^[A-Z0-9&\-]{1,18}(\.(NS|BO|US))?$/;
 
 /**
  * Canonicalise a user- or source-supplied symbol.
@@ -63,7 +63,7 @@ export function canonicalizeSymbol(input) {
 
   if (!TICKER.test(upper)) {
     throw new ValidationError(
-      `"${input}" is not a valid ticker. Use letters, digits, & or -, optionally with a .NS/.BO suffix.`,
+      `"${input}" is not a valid ticker. Use letters, digits, & or -, optionally with a .NS/.BO/.US suffix.`,
     );
   }
 
@@ -144,5 +144,7 @@ export function resolveSymbolQuery(input, universe = []) {
  * RELIANCE and RELIANCE.BO are two rows rather than one.
  */
 export function venueOf(canonicalSymbol) {
-  return canonicalSymbol.endsWith('.BO') ? 'BSE' : 'NSE';
+  if (canonicalSymbol.endsWith('.BO')) return 'BSE';
+  if (canonicalSymbol.endsWith('.US')) return 'US';
+  return 'NSE';
 }

@@ -4,6 +4,7 @@
  * THE INTERFACE
  *   describe()                        -> static facts about the source
  *   getSymbols()                      -> [{ symbol, name }] for UI suggestions
+ *   searchSymbols(query)              -> [{ symbol, name, exchange }] discovery
  *   getLatestSnapshot(symbol)         -> Snapshot | null
  *   getSnapshotAt(symbol, timestamp)  -> Snapshot | null
  *

@@ -124,7 +124,7 @@ test('a first visit says so instead of reporting a change of zero', () => {
   assert.equal(summary.away.ms, null);
   assert.equal(summary.counts.neverViewed, 1);
   assert.equal(summary.counts.changed, 0, 'nothing has changed *since last time* - there was none');
-  assert.match(summary.headline, /First look/);
+  assert.match(summary.headline, /Open this stock to start tracking/);
 });
 
 /**

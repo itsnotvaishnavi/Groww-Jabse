@@ -47,6 +47,13 @@ export const config = {
   ingestIntervalMs: num(process.env.INGEST_INTERVAL_MS, DEFAULT_INTERVAL_MS),
   ingestEnabled: process.env.INGEST_ENABLED !== 'false',
 
+  /** Optional explanation provider. It never participates in engine output. */
+  ai: {
+    apiKey: process.env.AI_API_KEY ?? null,
+    endpoint: process.env.AI_ENDPOINT ?? 'https://api.openai.com/v1/chat/completions',
+    model: process.env.AI_MODEL ?? 'gpt-4o-mini',
+  },
+
   /**
    * How much history to reconstruct into the log on boot. The whole point of a
    * "what changed since you last looked" product is having a past to diff

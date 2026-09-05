@@ -21,18 +21,7 @@
     -->
     <header class="nav">
       <div class="nav__brand">
-        <!-- Jabse's own mark: a delta, because the product is a difference. -->
-        <span class="mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none">
-            <path
-              d="M12 5.5 20 18.5H4z"
-              stroke="#fff"
-              stroke-width="2.2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-          </svg>
-        </span>
+        <img class="mark" src="assets/jabse-mark.svg" alt="Jabse" width="30" height="30" />
 
         <span class="nav__titles">
           <span class="nav__name">Jabse</span>
@@ -74,12 +63,11 @@
         <input
           id="symbol-input"
           name="symbol"
-          list="symbol-suggestions"
           placeholder="Search a symbol or company name…"
           maxlength="40"
           aria-label="Search or add a symbol or company name to your watchlist"
         />
-        <datalist id="symbol-suggestions"></datalist>
+        <div class="search-results" id="search-results" hidden></div>
         <kbd>Ctrl K</kbd>
       </form>
 
@@ -97,7 +85,7 @@
         <!--
           "Since you were away". Rendered from /api/summary, whose ranking comes
           from the engine - never from raw percentage change. Reading this does
-          not consume last_viewed_at; only "Mark seen" does.
+          not consume last_viewed_at; only explicitly opening a stock does.
         -->
         <section class="away" id="away" hidden>
           <div class="away__head">
@@ -115,16 +103,11 @@
 
         <div class="section-head">
           <h1>What changed since you last looked</h1>
-          <p class="section-sub" id="section-sub">
-            Not today's movers — the diff between the price when you last opened each
-            symbol and the newest one now.
-          </p>
         </div>
 
         <div class="chips" id="chips">
           <button type="button" class="chip is-active" data-filter="all">All</button>
           <button type="button" class="chip" data-filter="changed">Changed</button>
-          <button type="button" class="chip" data-filter="unseen">Not seen yet</button>
           <button type="button" class="chip" data-filter="attention">Needs attention</button>
 
           <div class="chips__right">
@@ -155,9 +138,6 @@
               writes no snapshot: market history is append-only and stays
               exactly as observed.
             -->
-            <button type="button" class="chip chip--ghost" id="mark-all-seen">
-              Mark all as seen
-            </button>
             <button type="button" class="chip chip--ghost" id="refresh-now">Refresh</button>
           </div>
         </div>
@@ -222,17 +202,35 @@
             <div class="card__body" id="history-body"></div>
           </div>
         </section>
+
+        <section class="latest-news" id="latest-news">
+          <div class="section-head">
+            <h2>Latest News</h2>
+            <p class="section-sub">Supporting context for the market, separate from Jabse’s meaningful-change signal.</p>
+          </div>
+          <div class="card">
+            <div class="card__body news" id="news-body"></div>
+          </div>
+        </section>
       </section>
 
       <aside class="col-side">
-        <div class="card" id="source-card">
-          <h2 class="card__title">Data source</h2>
-          <div class="card__body" id="source-body"></div>
+        <div class="card card--status" id="source-card">
+          <h2 class="card__title">Market data</h2>
+          <div class="card__body" id="source-summary"></div>
+          <details class="technical-details">
+            <summary>Data health details</summary>
+            <div class="card__body" id="source-body"></div>
+          </details>
         </div>
 
         <div class="card" id="log-card">
-          <h2 class="card__title">Snapshot log</h2>
-          <div class="card__body" id="log-body"></div>
+          <h2 class="card__title">Data pipeline</h2>
+          <div class="card__body" id="log-summary"></div>
+          <details class="technical-details">
+            <summary>Technical details</summary>
+            <div class="card__body" id="log-body"></div>
+          </details>
         </div>
 
         <!-- The reproducible demo scenarios, and how to run each one. -->
@@ -257,6 +255,17 @@
     </main>
 
     <footer class="footer" id="footer"></footer>
+
+    <dialog class="explanation-dialog" id="explanation-dialog" aria-labelledby="explanation-title">
+      <div class="explanation-dialog__head">
+        <div>
+          <p class="explanation-dialog__eyebrow">Supporting analysis</p>
+          <h2 id="explanation-title">Why did this move?</h2>
+        </div>
+        <button type="button" class="btn btn--icon" data-explanation-close aria-label="Close explanation">×</button>
+      </div>
+      <div class="explanation-dialog__body" id="explanation-body"></div>
+    </dialog>
 
     <script src="app.js" type="module"></script>
   </body>

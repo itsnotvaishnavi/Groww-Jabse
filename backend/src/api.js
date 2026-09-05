@@ -49,6 +49,8 @@ export function createApi({
   summaryService,
   surfacedStore,
   alertStore,
+  newsService,
+  explanationService,
 }) {
   const router = express.Router();
   const sourceInfo = source.describe();
@@ -201,6 +203,66 @@ export function createApi({
   router.get('/symbols', (_req, res) => {
     res.json({ source: source.name, symbols: source.getSymbols() });
   });
+
+  /** Source-owned discovery. Results are canonical before they reach the UI. */
+  router.get(
+    '/symbols/search',
+    asyncHandler(async (req, res) => {
+      const query = String(req.query.q ?? '').trim();
+      if (!query) throw new ValidationError('Type a ticker or company name to search.');
+
+      const raw = source.searchSymbols
+        ? await source.searchSymbols(query)
+        : source.getSymbols().filter((entry) => entry.symbol.toLowerCase().includes(query.toLowerCase()));
+      const seen = new Set();
+      const results = raw.filter((entry) => {
+        if (!entry?.symbol || seen.has(entry.symbol)) return false;
+        seen.add(entry.symbol);
+        return true;
+      });
+
+      res.json({ source: source.name, query, results });
+    }),
+  );
+
+  /** Supporting context only. Provider failure is isolated from the app data path. */
+  router.get(
+    '/news',
+    asyncHandler(async (req, res) => {
+      if (!newsService) return res.status(503).json({ error: 'news is disabled' });
+
+      const symbol = req.query.symbol ? normalizeSymbol(req.query.symbol) : null;
+      const limit = boundedLimit(req.query.limit, 8, 20);
+      try {
+        return res.json(await newsService.latest({ symbol, limit }));
+      } catch (error) {
+        return res.status(502).json({ error: 'news provider unavailable', detail: error.message });
+      }
+    }),
+  );
+
+  /** Optional explanation layer. It can only read an engine item and context. */
+  router.get(
+    '/explanation/:symbol',
+    asyncHandler(async (req, res) => {
+      if (!explanationService) return res.status(503).json({ error: 'AI explanation unavailable' });
+
+      try {
+        return res.json(
+          await explanationService.explain({
+            userId: config.devUserId,
+            symbol: normalizeSymbol(req.params.symbol),
+            now: Date.now(),
+          }),
+        );
+      } catch (error) {
+        if (error.message === 'symbol is not on the watchlist') {
+          return res.status(404).json({ error: error.message });
+        }
+        return res.status(503).json({ error: 'AI explanation unavailable' });
+      }
+    }),
+  );
 
   /**
    * The watchlist, scored.

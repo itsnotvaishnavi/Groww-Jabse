@@ -23,7 +23,7 @@ const { createDatabase } = await import('../src/db.js');
 const { createSnapshotLog } = await import('../src/snapshot-log.js');
 const { createWatchlist } = await import('../src/watchlist.js');
 const { TICK_MS, simulator, __testing: SIM } = await import('../src/sources/simulator.js');
-const { toYahooSymbol } = await import('../src/sources/yahoo.js');
+const { toYahooSymbol, yahoo } = await import('../src/sources/yahoo.js');
 
 // ------------------------------------------------------- P0.0 canonical keys
 
@@ -123,6 +123,50 @@ test('the real source universe is searchable by name', () => {
   assert.equal(resolveSymbolQuery('zomato', universe).symbol, 'ZOMATO');
 });
 
+test('the simulator search is deterministic and supports arbitrary ticker identities', async () => {
+  const first = await simulator.searchSymbols('AAPL');
+  const second = await simulator.searchSymbols('AAPL');
+
+  assert.deepEqual(first, second);
+  assert.deepEqual(first[0], {
+    symbol: 'AAPL.US',
+    name: 'Apple',
+    exchange: 'Synthetic US market',
+    market: 'SIM-US',
+  });
+});
+
+test('featured simulator search returns ticker, company and exchange metadata', async () => {
+  const results = await simulator.searchSymbols('tata');
+  assert.deepEqual(
+    results.map(({ symbol, name, exchange }) => ({ symbol, name, exchange })),
+    [
+      { symbol: 'TCS', name: 'Tata Consultancy Services', exchange: 'Synthetic market' },
+      { symbol: 'TATAMOTORS', name: 'Tata Motors', exchange: 'Synthetic market' },
+    ],
+  );
+});
+
+test('simulator exposes deterministic company aliases for broad discovery demos', async () => {
+  const results = await simulator.searchSymbols('Apple');
+  assert.deepEqual(results, [
+    { symbol: 'AAPL.US', name: 'Apple', exchange: 'Synthetic US market', market: 'SIM-US' },
+  ]);
+});
+
+test('Yahoo discovery failures remain explicit', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new Error('network offline');
+  };
+
+  try {
+    await assert.rejects(() => yahoo.searchSymbols('Apple'), /yahoo: search failed: network offline/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('BSE is a different venue and keeps its suffix', () => {
   for (const spelling of ['RELIANCE.BO', 'reliance.bo', ' Reliance.Bo ']) {
     assert.equal(canonicalizeSymbol(spelling), 'RELIANCE.BO', `spelling: "${spelling}"`);
@@ -133,6 +177,13 @@ test('BSE is a different venue and keeps its suffix', () => {
   assert.notEqual(canonicalizeSymbol('RELIANCE'), canonicalizeSymbol('RELIANCE.BO'));
   assert.equal(venueOf('RELIANCE'), 'NSE');
   assert.equal(venueOf('RELIANCE.BO'), 'BSE');
+});
+
+test('US discovery identities stay distinct from NSE and map to Yahoo wire symbols', async () => {
+  assert.equal(canonicalizeSymbol('AAPL.US'), 'AAPL.US');
+  assert.equal(venueOf('AAPL.US'), 'US');
+  assert.notEqual(canonicalizeSymbol('AAPL.US'), canonicalizeSymbol('AAPL'));
+  assert.equal(toYahooSymbol('AAPL.US'), 'AAPL');
 });
 
 test('the benchmark answers to every name it is known by', () => {

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" role="img" aria-labelledby="title desc">
+  <title id="title">Jabse mark</title>
+  <desc id="desc">A circular blue and teal mark with a rising angular divide.</desc>
+  <defs>
+    <clipPath id="circle"><circle cx="320" cy="320" r="300"/></clipPath>
+  </defs>
+  <circle cx="320" cy="320" r="300" fill="#5267f4"/>
+  <path clip-path="url(#circle)" fill="#0dddb7" d="M0 463 238 270c18-15 43-17 63-5l72 42c17 10 38 8 52-6L640 86v554H0Z"/>
+</svg>

@@ -13,6 +13,9 @@
 
 import { createChart } from './chart.js';
 import { createPanels } from './panels.js';
+import { createNews } from './news.js';
+import { createSearch } from './search.js';
+import { createExplanation } from './explanation.js';
 import { DEFAULT_SENSITIVITY, SENSITIVITY, displayGroupFor } from './sensitivity.js';
 
 const POLL_INTERVAL_MS = 5_000;
@@ -22,29 +25,30 @@ const el = {
   ticker: document.getElementById('ticker'),
   form: document.getElementById('add-form'),
   input: document.getElementById('symbol-input'),
-  suggestions: document.getElementById('symbol-suggestions'),
+  searchResults: document.getElementById('search-results'),
   suggestList: document.getElementById('suggest-list'),
   formError: document.getElementById('form-error'),
   chips: document.getElementById('chips'),
   sort: document.getElementById('sort-select'),
   refreshNow: document.getElementById('refresh-now'),
-  markAllSeen: document.getElementById('mark-all-seen'),
   sensitivity: document.getElementById('sensitivity-select'),
   historySection: document.getElementById('history-section'),
   historyChips: document.getElementById('history-chips'),
   historyBody: document.getElementById('history-body'),
   tbody: document.getElementById('watchlist'),
   empty: document.getElementById('empty-state'),
-  sectionSub: document.getElementById('section-sub'),
   away: document.getElementById('away'),
   awayHeadline: document.getElementById('away-headline'),
   awaySignals: document.getElementById('away-signals'),
   awayScenarios: document.getElementById('away-scenarios'),
   scenarioList: document.getElementById('scenario-list'),
   sourceBody: document.getElementById('source-body'),
+  sourceSummary: document.getElementById('source-summary'),
   logBody: document.getElementById('log-body'),
+  logSummary: document.getElementById('log-summary'),
   alertFeed: document.getElementById('alert-feed'),
   footer: document.getElementById('footer'),
+  newsBody: document.getElementById('news-body'),
 };
 
 /** Rows the user expanded, kept across re-renders so a poll does not collapse
@@ -186,6 +190,16 @@ async function api(path, options) {
   return body;
 }
 
+const news = createNews({ api, escapeHtml, whenIst, ago });
+const explanation = createExplanation({ api, escapeHtml, signed, whenIst, ago });
+const search = createSearch({
+  api,
+  input: el.input,
+  results: el.searchResults,
+  escapeHtml,
+  onSelect: (symbol) => void addSymbol(symbol),
+});
+
 // -------------------------------------------------------------- row fragments
 
 /**
@@ -224,7 +238,7 @@ function deltaCell(item) {
 
   if (!change.available) {
     const reasons = {
-      never_viewed: 'Not seen yet — mark it seen to start tracking changes',
+      never_viewed: 'No baseline yet — open this stock to start tracking changes',
       no_observation_at_last_view:
         'No observation recorded when you last looked, so there is nothing to diff yet',
       no_current_observation: 'Waiting for the first observation from the feed',
@@ -370,15 +384,23 @@ const MAX_REASONS_SHOWN = 3;
  * nothing crossed its evidence threshold, and that is worth seeing.
  */
 function whyCell(item) {
-  const badge = `<span class="level level--${escapeHtml(item.level)}"
-    title="Meaningful change score ${item.meaningfulScore} · confidence ${item.confidence}">
-    ${escapeHtml(item.level)}<span class="level__score">${item.meaningfulScore.toFixed(2)}</span>
-  </span>`;
+  const badge = item.needsAttention
+    ? `<span class="level level--${escapeHtml(item.level)}">${escapeHtml(item.level)}</span>`
+    : '';
 
   const reasons = item.reasonText ?? [];
   const codes = item.reasons ?? [];
+  const change = item.changeSinceViewed ?? item.delta;
+  const explainButton =
+    change?.available &&
+    change.percent !== 0 &&
+    item.needsAttention === true
+      ? `<button type="button" class="why-action" data-action="explain">
+          Why did this move? <span aria-hidden="true">ⓘ</span>
+        </button>`
+      : '';
 
-  if (reasons.length === 0) return badge;
+  if (reasons.length === 0) return `${badge}${explainButton}`;
 
   const shown = reasons.slice(0, MAX_REASONS_SHOWN).map((text, i) => {
     const caveat = CAVEAT_CODES.has(codes[i]) ? ' why--caveat' : '';
@@ -390,18 +412,15 @@ function whyCell(item) {
     shown.push(`<li class="why--more">+${remaining} more in detail</li>`);
   }
 
-  return `${badge}<ul class="why">${shown.join('')}</ul>`;
+  return `${badge}<ul class="why">${shown.join('')}</ul>${explainButton}`;
 }
 
 function renderRow(item) {
   const { latest, freshness } = item;
   const isOpen = expanded.has(item.symbol);
 
-  const meta = latest
-    ? `${escapeHtml(latest.source)} · ${observedAt(latest.timestamp)} IST · vol ${compact.format(
-        latest.volume,
-      )}`
-    : 'no observations recorded yet';
+  const venue = item.symbol.endsWith('.BO') ? 'BSE' : item.symbol.endsWith('.US') ? 'US' : 'NSE';
+  const meta = latest ? venue : 'waiting for first price';
 
   const row = node(`
     <tr class="wl__row" style="--state-color: ${stateColor(freshness.state)}">
@@ -418,16 +437,12 @@ function renderRow(item) {
       </td>
       <td class="num">
         <div class="price">${latest ? `₹${inr.format(latest.price)}` : '—'}</div>
-        <div class="price__age">${
-          freshness.ageMs == null ? 'no data' : ago(freshness.ageMs)
-        }</div>
         <div class="price__state">${freshnessPill(freshness)}</div>
       </td>
       <td class="num">${deltaCell(item)}</td>
       <td>${whyCell(item)}</td>
       <td>
         <div class="actions">
-          <button type="button" class="btn btn--primary" data-action="viewed">Mark seen</button>
           <button type="button" class="btn btn--icon" data-action="remove"
                   aria-label="Remove ${escapeHtml(item.symbol)}"
                   title="Remove from watchlist">${CROSS}</button>
@@ -438,9 +453,8 @@ function renderRow(item) {
       </td>
     </tr>`);
 
-  row.querySelector('[data-action="viewed"]').addEventListener('click', async () => {
-    await api(`/watchlist/${encodeURIComponent(item.symbol)}/viewed`, { method: 'POST' });
-    await refresh();
+  row.querySelector('[data-action="explain"]')?.addEventListener('click', () => {
+    void explanation.open(item.symbol);
   });
 
   row.querySelector('[data-action="remove"]').addEventListener('click', async () => {
@@ -450,7 +464,7 @@ function renderRow(item) {
     await refresh();
   });
 
-  row.querySelector('[data-action="expand"]').addEventListener('click', () => {
+  row.querySelector('[data-action="expand"]').addEventListener('click', async () => {
     if (expanded.has(item.symbol)) {
       expanded.delete(item.symbol);
       // Collapsing is the user closing the row, so its panels are discarded
@@ -458,9 +472,16 @@ function renderRow(item) {
       // not accumulate detached nodes for every row ever opened.
       panelSlots.delete(item.symbol);
     } else {
-      expanded.add(item.symbol);
+      try {
+        await api(`/watchlist/${encodeURIComponent(item.symbol)}/viewed`, { method: 'POST' });
+        expanded.add(item.symbol);
+      } catch (error) {
+        el.formError.textContent = `Could not open ${item.symbol}: ${error.message}`;
+        el.formError.hidden = false;
+        return;
+      }
     }
-    render(lastPayload);
+    await refresh();
   });
 
   return row;
@@ -659,6 +680,7 @@ function detailRow(item) {
   const row = node(
     `<tr class="wl__audit"><td colspan="5" class="audit">
        <div class="chart-slot"></div>
+      <div class="stock-news-slot"></div>
        <div class="row-actions">
          <button type="button" class="btn" data-action="intraday">Analyze Intraday</button>
          <button type="button" class="btn" data-action="alert">Set Alert</button>
@@ -673,6 +695,7 @@ function detailRow(item) {
   row.querySelector('.panel-slots').append(slots.intraday, slots.alert);
 
   void chart.load(row.querySelector('.chart-slot'), item.symbol);
+  void news.load(row.querySelector('.stock-news-slot'), item.symbol);
   void loadAudit(row.querySelector('.audit__observations'), item.symbol);
 
   /**
@@ -826,7 +849,7 @@ function benchmarkRow(benchmark) {
 }
 
 function renderStatus(payload) {
-  const { source, market } = payload;
+  const { source, market, items } = payload;
 
   el.sourcePill.className = `pill pill--${source.kind === 'synthetic' ? 'delayed' : 'live'}`;
   el.sourcePill.textContent =
@@ -845,6 +868,20 @@ function renderStatus(payload) {
       : `NSE is closed. Opens ${whenIst(market.nextOpenAt)} IST; last close ${whenIst(
           market.lastCloseAt,
         )} IST.`;
+
+  const newestAge = items
+    .map((item) => item.freshness.ageMs)
+    .filter((age) => age != null)
+    .sort((a, b) => a - b)[0];
+  const statusLabel = source.kind === 'synthetic' ? 'Simulated market' : 'Market data';
+  el.sourceSummary.innerHTML = `
+    <div class="market-status">
+      <span class="market-status__dot" style="background: ${stateColor(newestAge == null ? 'no_data' : items[0]?.freshness.state)}"></span>
+      <div>
+        <strong>${statusLabel}</strong>
+        <span>${newestAge == null ? 'Waiting for an update' : `Updated ${ago(newestAge)}`}</span>
+      </div>
+    </div>`;
 
   el.sourceBody.innerHTML = `
     <div class="kv"><span class="kv__k">Source</span><span class="kv__v">${escapeHtml(
@@ -908,22 +945,45 @@ function heartbeatLine(ingest) {
     }</span></div>`;
 }
 
-function renderLogCard(meta) {
+function freshnessSummary(items) {
+  const counts = items.reduce((result, item) => {
+    result[item.freshness.state] = (result[item.freshness.state] ?? 0) + 1;
+    return result;
+  }, {});
+  const labels = {
+    live: 'Fresh',
+    delayed: 'Delayed',
+    market_closed: 'Market closed',
+    stale: 'Stale',
+    no_data: 'Waiting for data',
+  };
+  const states = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  if (states.length === 0) return 'No symbols yet';
+  const [state, count] = states[0];
+  return `${labels[state] ?? state}${count > 1 ? ` · ${count} symbols` : ''}`;
+}
+
+function renderLogCard(meta, payload) {
   if (!meta) return;
   const { log, ingest, config } = meta;
   const failing = Object.keys(ingest?.failingSymbols ?? {});
 
-  el.logBody.innerHTML = `
+  el.logSummary.innerHTML = `
     ${heartbeatLine(ingest)}
+    <div class="kv"><span class="kv__k">Data freshness</span><span class="kv__v">${escapeHtml(
+      freshnessSummary(payload?.items ?? []),
+    )}</span></div>
+    <div class="kv"><span class="kv__k">Update frequency</span><span class="kv__v">every ${
+      config.ingestIntervalMs / 1000
+    }s</span></div>`;
+
+  el.logBody.innerHTML = `
     <div class="kv"><span class="kv__k">Observations</span><span class="kv__v">${log.snapshots.toLocaleString(
       'en-IN',
     )}</span></div>
     <div class="kv"><span class="kv__k">Oldest data</span><span class="kv__v">${
       log.oldestTimestamp ? ago(Date.now() - log.oldestTimestamp) : '—'
     }</span></div>
-    <div class="kv"><span class="kv__k">Update frequency</span><span class="kv__v">every ${
-      config.ingestIntervalMs / 1000
-    }s</span></div>
     ${(ingest?.failures ?? 0) > 0 ? `<div class="kv"><span class="kv__k">Failures</span><span class="kv__v down">${ingest.failures}</span></div>` : ''}
     <p class="card__note">
       The log is append-only — SQLite triggers reject UPDATE and DELETE, so a price you have
@@ -953,19 +1013,19 @@ const GROUPS = [
   {
     key: 'needs_attention',
     label: 'Needs attention',
-    note: 'Scored at or above the engine’s attention bar.',
+    note: 'Worth a closer look right now.',
     tone: 'attention',
   },
   {
     key: 'meaningful',
     label: 'Meaningful changes',
-    note: 'Something notable happened to this stock, but below the attention bar.',
+    note: 'Something notable happened while you were away.',
     tone: 'meaningful',
   },
   {
     key: 'stable',
     label: 'Stable',
-    note: 'Measured against your baseline, and nothing notable to report.',
+    note: 'Nothing meaningful to report yet.',
     tone: 'stable',
   },
   {
@@ -976,7 +1036,7 @@ const GROUPS = [
      * the absence of one. The wording covers both ways of having no baseline -
      * never marked seen, and nothing new observed since you were.
      */
-    note: 'Nothing to compare against yet — mark these seen to start tracking.',
+    note: 'Open a stock to start tracking changes.',
     tone: 'unseen',
   },
 ];
@@ -1061,11 +1121,6 @@ function render(payload) {
    * marked all four seen, because a frozen feed leaves the baseline in place
    * and simply provides nothing newer to diff against it.
    */
-  const withBaseline = payload.items.filter((i) => !FILTERS.unseen(i)).length;
-  el.sectionSub.textContent =
-    `Not today's movers — the diff between the price when you last opened each symbol and the newest one now. ` +
-    `${withBaseline} of ${payload.items.length} have a baseline to compare against.`;
-
   el.footer.innerHTML = `
     Prices come from <strong>${escapeHtml(payload.source.name)}</strong>.
     ${
@@ -1342,7 +1397,7 @@ async function refresh() {
     lastMeta = meta;
     render(watchlist);
     renderAway(summary);
-    renderLogCard(meta);
+    renderLogCard(meta, watchlist);
     renderSuggestions();
     /**
      * After the summary, deliberately: the summary is what RECORDS a surfaced
@@ -1388,14 +1443,6 @@ async function loadFeatured() {
   try {
     const { symbols } = await api('/symbols');
     featured = symbols;
-    el.suggestions.replaceChildren(
-      ...symbols.map((s) => {
-        const option = document.createElement('option');
-        option.value = s.symbol;
-        option.label = s.name;
-        return option;
-      }),
-    );
     renderSuggestions();
   } catch {
     // Suggestions are a convenience; typing a ticker works without them.
@@ -1447,25 +1494,12 @@ el.sensitivity.addEventListener('change', () => {
 });
 
 /**
- * "Mark all as seen" - one explicit user action, one baseline stamp.
+ * Opening a stock detail is one explicit user action and one baseline stamp.
  *
  * Disabled while in flight so a double click cannot send two stamps at two
  * instants, and re-enabled in `finally` so a failure does not leave the
  * control dead.
  */
-el.markAllSeen.addEventListener('click', async () => {
-  el.markAllSeen.disabled = true;
-  try {
-    await api('/watchlist/viewed-all', { method: 'POST' });
-    await refresh();
-  } catch (error) {
-    el.formError.textContent = `Could not mark all as seen: ${error.message}`;
-    el.formError.hidden = false;
-  } finally {
-    el.markAllSeen.disabled = false;
-  }
-});
-
 el.refreshNow.addEventListener('click', async () => {
   await api('/ingest/tick', { method: 'POST' }).catch(() => {});
   await refresh();
@@ -1513,5 +1547,6 @@ document.addEventListener('keydown', (event) => {
 
 await loadFeatured();
 await loadScenarios();
+void news.load(el.newsBody);
 await refresh();
 setInterval(refresh, POLL_INTERVAL_MS);

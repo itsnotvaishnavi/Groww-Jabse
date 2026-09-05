@@ -17,7 +17,7 @@
  *     that the staleness handling works.
  */
 import { config } from '../config.js';
-import { BENCHMARK_SYMBOL } from '../symbols.js';
+import { BENCHMARK_SYMBOL, canonicalizeSymbol } from '../symbols.js';
 import { bernoulli, channel, fbm, fnv1a, gaussian, hashUnit } from './noise.js';
 
 /**
@@ -50,6 +50,14 @@ const UNIVERSE = [
   { symbol: 'BHARTIARTL', name: 'Bharti Airtel', basePrice: 1655, swing: 0.08 },
   { symbol: 'LT', name: 'Larsen & Toubro', basePrice: 3620, swing: 0.09 },
   { symbol: 'ZOMATO', name: 'Eternal (Zomato)', basePrice: 275, swing: 0.19 },
+];
+
+/** Small deterministic aliases for demonstrating cross-market discovery. */
+const EXTERNAL_DISCOVERY = [
+  { symbol: 'AAPL.US', name: 'Apple', exchange: 'Synthetic US market', market: 'SIM-US' },
+  { symbol: 'MSFT.US', name: 'Microsoft', exchange: 'Synthetic US market', market: 'SIM-US' },
+  { symbol: 'NVDA.US', name: 'NVIDIA', exchange: 'Synthetic US market', market: 'SIM-US' },
+  { symbol: 'ZI.US', name: 'ZoomInfo', exchange: 'Synthetic US market', market: 'SIM-US' },
 ];
 
 const BY_SYMBOL = new Map(UNIVERSE.map((s) => [s.symbol, s]));
@@ -328,6 +336,32 @@ export const simulator = {
   /** Featured symbols, for the UI's suggestion list. Any ticker still works. */
   getSymbols() {
     return UNIVERSE.map(({ symbol, name }) => ({ symbol, name }));
+  },
+
+  /** Discovery stays local and deterministic; it never calls the network. */
+  async searchSymbols(query) {
+    const folded = query.trim().toLowerCase();
+    const featured = this.getSymbols()
+      .filter(
+        (entry) =>
+          entry.symbol.toLowerCase().includes(folded) || entry.name.toLowerCase().includes(folded),
+      )
+      .map((entry) => ({ ...entry, exchange: 'Synthetic market', market: 'SIM' }));
+
+    const external = EXTERNAL_DISCOVERY.filter(
+      (entry) =>
+        entry.symbol.toLowerCase().includes(folded) || entry.name.toLowerCase().includes(folded),
+    );
+
+    if (featured.length > 0 || external.length > 0) return [...featured, ...external];
+
+    try {
+      const symbol = canonicalizeSymbol(query);
+      if (symbol === BENCHMARK_SYMBOL) return [];
+      return [{ symbol, name: symbol.replace(/\.US$/, ''), exchange: 'Synthetic market', market: 'SIM' }];
+    } catch {
+      return [];
+    }
   },
 
   /**

@@ -18,6 +18,8 @@ import { createIngestor } from './ingest.js';
 import { createSnapshotLog } from './snapshot-log.js';
 import { createSummaryService } from './summary.js';
 import { createWatchlist } from './watchlist.js';
+import { createNewsService } from './news.js';
+import { createExplanationService, createOpenAiCompatibleProvider } from './explanation.js';
 import { getSource } from './sources/index.js';
 
 const STARTED_AT = Date.now();
@@ -37,6 +39,7 @@ if (seeded.length > 0) {
 
 const surfacedStore = createSurfacedStore(db);
 const alertStore = createAlertStore(db, config.alerts);
+const newsService = createNewsService();
 
 /**
  * Alerts are evaluated on every ingestion tick, because that is the moment a
@@ -86,6 +89,16 @@ const summaryService = createSummaryService({
   watchlist,
   surfacedStore,
   clock: () => Date.now(),
+});
+const explanationService = createExplanationService({
+  engine,
+  source,
+  newsService,
+  provider: createOpenAiCompatibleProvider({
+    apiKey: config.ai.apiKey,
+    endpoint: config.ai.endpoint,
+    model: config.ai.model,
+  }),
 });
 
 const app = express();
@@ -143,6 +156,8 @@ app.use(
     summaryService,
     surfacedStore,
     alertStore,
+    newsService,
+    explanationService,
   }),
 );
 

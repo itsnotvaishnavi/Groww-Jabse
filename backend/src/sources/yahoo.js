@@ -17,6 +17,7 @@
 import { BENCHMARK_SYMBOL, canonicalizeSymbol } from '../symbols.js';
 
 const BASE_URL = 'https://query1.finance.yahoo.com/v8/finance/chart';
+const SEARCH_URL = 'https://query1.finance.yahoo.com/v1/finance/search';
 const REQUEST_TIMEOUT_MS = 8_000;
 
 /**
@@ -55,7 +56,19 @@ const YAHOO_BENCHMARK = '^NSEI';
 export function toYahooSymbol(symbol) {
   const canonical = canonicalizeSymbol(symbol);
   if (canonical === BENCHMARK_SYMBOL) return YAHOO_BENCHMARK;
+  if (canonical.endsWith('.US')) return canonical.slice(0, -3);
   return canonical.endsWith('.BO') ? canonical : `${canonical}.NS`;
+}
+
+function canonicalSearchSymbol(symbol) {
+  if (typeof symbol !== 'string' || symbol.trim() === '') return null;
+  const raw = symbol.trim().toUpperCase();
+  if (raw.endsWith('.NS') || raw.endsWith('.BO')) return canonicalizeSymbol(raw);
+  try {
+    return canonicalizeSymbol(`${raw}.US`);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -104,6 +117,23 @@ async function fetchChart(params) {
   if (!result) throw new Error(`yahoo: empty result for ${params.symbol}`);
 
   return result;
+}
+
+async function fetchSearch(query) {
+  const url = `${SEARCH_URL}?q=${encodeURIComponent(query)}&quotesCount=25&newsCount=0`;
+  let response;
+  try {
+    response = await fetch(url, {
+      headers: HEADERS,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (cause) {
+    throw new Error(`yahoo: search failed: ${cause.message}`, { cause });
+  }
+
+  if (!response.ok) throw new Error(`yahoo: search HTTP ${response.status}`);
+  const body = await response.json();
+  return body?.quotes ?? [];
 }
 
 /**
@@ -211,6 +241,27 @@ export const yahoo = {
     return FEATURED;
   },
 
+  async searchSymbols(query) {
+    const quotes = await fetchSearch(query);
+    const seen = new Set();
+    const results = [];
+
+    for (const quote of quotes) {
+      if (!['EQUITY', 'ETF', 'MUTUALFUND'].includes(quote.quoteType)) continue;
+      const symbol = canonicalSearchSymbol(quote.symbol);
+      if (!symbol || seen.has(symbol)) continue;
+      seen.add(symbol);
+      results.push({
+        symbol,
+        name: quote.longname ?? quote.shortname ?? symbol,
+        exchange: quote.fullExchangeName ?? quote.exchange ?? 'Market unavailable',
+        market: quote.exchange ?? null,
+      });
+    }
+
+    return results;
+  },
+
   /**
    * The latest quote Yahoo will admit to. Note the two-tier volume read: a
    * 1-minute candle's volume is comparable to the simulator's per-tick volume,
@@ -292,4 +343,4 @@ export const yahoo = {
   },
 };
 
-export const __testing = { windowFor, callerSymbol, windowCache };
+export const __testing = { windowFor, callerSymbol, windowCache, canonicalSearchSymbol };

@@ -281,8 +281,8 @@ export function headlineFor({
 
   if (away.firstVisit) {
     return unseen.length === 1
-      ? 'First look at this symbol — mark it seen to start tracking what changes.'
-      : `First look at these ${unseen.length} symbols — mark them seen to start tracking what changes.`;
+      ? 'Open this stock to start tracking what changes from your visit.'
+      : `Open a stock to start tracking what changes from your visit.`;
   }
 
   const duration = describeDuration(away.awayMs);
