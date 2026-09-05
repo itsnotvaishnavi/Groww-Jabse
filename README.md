@@ -44,6 +44,9 @@ volatility, and shows the evidence behind each result.
   results enter the watchlist and monitoring path.
 - **You might want to watch:** at most four discovery candidates based on the
   user’s followed sectors and existing engine activity.
+- **What to Watch Today:** a compact right-sidebar card surfacing up to three
+  market-wide candidates where multiple observable signals agree. It is
+  deterministic market-signal discovery, not a prediction or recommendation.
 - **Latest News:** optional supporting context, never part of the score.
 - **Optional contextual AI:** short explanations only for attention-worthy
   moves when relevant verified news exists. AI never decides importance.
@@ -150,6 +153,81 @@ and does not establish a viewing baseline; opening it does.
 
 If no candidate meets the requirements, the UI says **“Nothing new stands out
 right now.”**
+
+## What to Watch Today
+
+**What to Watch Today** is a compact right-sidebar card that answers a
+different question from the personal watchlist:
+
+> **Which stocks currently stand out enough to keep an eye on?**
+
+It is **market-wide signal discovery**, not a prediction, not a
+recommendation, and not a personal attention verdict. It surfaces up to three
+candidates where multiple observable signals from the existing meaningful-change
+engine agree — for example a meaningful move plus unusual volume plus
+market-relative strength.
+
+### How it differs from the rest of Jabse
+
+- **Not the personal watchlist.** It evaluates the broader market universe, not
+  the user’s holdings.
+- **Not “Needs attention”.** Appearing here never sets `needsAttention = true`
+  on the user’s watchlist, never changes levels, thresholds, alerts, or
+  `last_viewed_at`. The two systems are fully separate.
+- **Not a prediction.** It never forecasts a future return, never claims a
+  stock will rise or fall, and never says a stock will be profitable.
+- **Not an investment recommendation.** It reports observable market signals
+  (“Meaningful move”, “Unusual activity”, “Relative strength”) and nothing more.
+
+### How it works
+
+1. It builds a read-only engine view over the source’s known universe.
+2. It reuses the existing engine’s feature extraction — price anomaly, volume
+   anomaly, market-relative, and sector-relative — with zero duplicate math.
+3. A candidate qualifies only when its meaningfulness score clears the bar and
+   either multiple signals agree or the engine’s own level is HIGH.
+4. Candidates are ranked by a deterministic score: meaningfulness, then the
+   number of agreeing signals, then confidence, then symbol as a tie-breaker.
+   Raw percentage change alone never determines ranking.
+5. If no stock has sufficient evidence, the card shows **“Nothing strong stands
+   out today.”** — weak stocks are never forced in.
+
+### Data health
+
+The card respects the existing freshness states:
+
+- Market closed → **“Latest available signals”**
+- Data delayed → **“Signals may be delayed”**
+- Stale or unavailable → **“Market signals unavailable”**
+
+Stale data is never presented as live.
+
+### News
+
+News is optional context only. If the existing news-relevance system finds a
+verified relevant article, the card shows a small **“News”** indicator. News
+never independently creates a recommendation, and full articles remain on the
+stock detail page.
+
+### Click behaviour
+
+Clicking a candidate opens the existing stock detail page. Appearing in the
+sidebar, rendering, or hovering never marks a stock as viewed — only explicitly
+opening its detail does, preserving the existing `last_viewed_at` semantics. A
+small “+” action adds a candidate to the watchlist without establishing a
+viewing baseline.
+
+### API
+
+The backend determines candidates, ranking, signals, reasons, confidence, and
+freshness. The frontend only renders the result. The endpoint is:
+
+```
+GET /api/watch-today
+```
+
+The feature works with the deterministic simulator and is fully covered by the
+test suite.
 
 ## Architecture
 
@@ -265,6 +343,7 @@ BACKFILL_HOURS=6 npm start
 | `GET` | `/api/intraday/:symbol` | Intraday analysis |
 | `GET` | `/api/symbols/search?q=` | Local/cached NSE/BSE equity catalogue search |
 | `GET` | `/api/discovery` | Watchlist discovery candidates |
+| `GET` | `/api/watch-today` | Market-wide “What to Watch Today” candidates |
 | `GET` | `/api/news?symbol=` | Supporting news context |
 | `GET` | `/api/explanation/:symbol` | Optional contextual explanation |
 | `POST` | `/api/watchlist` | Add a canonical symbol |
@@ -283,7 +362,7 @@ Run the full suite with:
 npm test
 ```
 
-The current suite contains **243 tests** covering:
+The current suite contains **269 tests** covering:
 
 - engine scoring, levels, confidence, missing signals, floors, and determinism
 - snapshot immutability, canonical symbols, freshness, and ingestion failures

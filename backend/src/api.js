@@ -52,6 +52,7 @@ export function createApi({
   newsService,
   explanationService,
   discoveryService,
+  watchTodayService,
   instrumentCatalogue,
 }) {
   const router = express.Router();
@@ -210,6 +211,17 @@ export function createApi({
     if (!discoveryService) return res.status(503).json({ error: 'discovery is disabled' });
     res.json(discoveryService.build({ userId: config.devUserId, limit: 4 }));
   });
+
+  /** Market-wide discovery: What to Watch Today. */
+  router.get(
+    ['/watch-today', '/market/watch-today'],
+    asyncHandler(async (req, res) => {
+      if (!watchTodayService) return res.status(503).json({ error: 'watch-today is disabled' });
+      const limit = boundedLimit(req.query.limit, 3, 10);
+      const result = await watchTodayService.build({ limit });
+      res.json(result);
+    }),
+  );
 
   /** Source-owned discovery. Results are canonical before they reach the UI. */
   router.get(

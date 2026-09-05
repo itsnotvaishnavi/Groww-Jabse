@@ -33,7 +33,11 @@ const DEFAULT_INTERVAL_MS = DATA_SOURCE === 'simulator' ? 15_000 : 60_000;
 
 export const config = {
   port: num(process.env.PORT, 3000),
-  dbPath: process.env.DB_PATH ?? path.join(REPO_ROOT, 'data', 'watchlist.sqlite'),
+  // Vercel instances have an ephemeral writable /tmp directory. This keeps
+  // cold-start demo state writable without pretending it is durable storage.
+  dbPath:
+    process.env.DB_PATH ??
+    (process.env.VERCEL ? '/tmp/jabse-watchlist.sqlite' : path.join(REPO_ROOT, 'data', 'watchlist.sqlite')),
 
   dataSource: DATA_SOURCE,
 
@@ -45,7 +49,9 @@ export const config = {
   simSeed: process.env.SIM_SEED ?? 'groww-code-2026',
 
   ingestIntervalMs: num(process.env.INGEST_INTERVAL_MS, DEFAULT_INTERVAL_MS),
-  ingestEnabled: process.env.INGEST_ENABLED !== 'false',
+  // Serverless functions cannot host a reliable permanent polling worker.
+  ingestEnabled:
+    process.env.INGEST_ENABLED !== 'false' && process.env.VERCEL !== '1',
 
   /** Optional explanation provider. It never participates in engine output. */
   ai: {

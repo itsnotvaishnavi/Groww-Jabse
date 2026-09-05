@@ -17,7 +17,7 @@ import { createNews } from './news.js';
 import { createSearch } from './search.js';
 import { createExplanation } from './explanation.js';
 import { createSparkline } from './sparkline.js';
-import { createDiscovery } from './discovery.js';
+import { createWatchToday } from './watch-today.js';
 import { DEFAULT_SENSITIVITY, SENSITIVITY, displayGroupFor } from './sensitivity.js';
 
 const POLL_INTERVAL_MS = 5_000;
@@ -51,7 +51,9 @@ const el = {
   alertFeed: document.getElementById('alert-feed'),
   footer: document.getElementById('footer'),
   newsBody: document.getElementById('news-body'),
-  discoveryList: document.getElementById('discovery-list'),
+  watchTodayCard: document.getElementById('watch-today-card'),
+  watchTodayBody: document.getElementById('watch-today-body'),
+  watchTodaySubtitle: document.getElementById('watch-today-subtitle'),
 };
 
 /** Rows the user expanded, kept across re-renders so a poll does not collapse
@@ -196,19 +198,22 @@ async function api(path, options) {
 const news = createNews({ api, escapeHtml, whenIst, ago });
 const explanation = createExplanation({ api, escapeHtml, signed, whenIst, ago });
 const sparkline = createSparkline({ api });
-const discovery = createDiscovery({
+const watchToday = createWatchToday({
   api,
   escapeHtml,
-  signed,
   onAdd: async (symbol) => {
     await api('/watchlist', { method: 'POST', body: JSON.stringify({ symbol }) });
     await refresh();
   },
   onOpen: async (symbol) => {
-    await api('/watchlist', { method: 'POST', body: JSON.stringify({ symbol }) });
+    await api('/watchlist', { method: 'POST', body: JSON.stringify({ symbol }) }).catch(() => {});
     await api(`/watchlist/${encodeURIComponent(symbol)}/viewed`, { method: 'POST' });
     expanded.add(symbol);
     await refresh();
+    setTimeout(() => {
+      const row = document.querySelector(`[data-symbol="${symbol}"]`);
+      if (row) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 50);
   },
 });
 const search = createSearch({
@@ -1465,6 +1470,8 @@ async function refresh() {
     renderAway(summary);
     renderLogCard(meta, watchlist);
     renderSuggestions();
+    const watchedSymbols = new Set((watchlist?.items ?? []).map((i) => i.symbol));
+    void watchToday.load(el.watchTodayBody, el.watchTodaySubtitle, watchedSymbols);
     /**
      * After the summary, deliberately: the summary is what RECORDS a surfaced
      * signal, so loading the history first would show the page as it was one
@@ -1614,6 +1621,5 @@ document.addEventListener('keydown', (event) => {
 await loadFeatured();
 await loadScenarios();
 void news.load(el.newsBody);
-void discovery.load(el.discoveryList);
 await refresh();
 setInterval(refresh, POLL_INTERVAL_MS);

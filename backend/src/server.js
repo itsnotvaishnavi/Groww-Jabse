@@ -21,10 +21,12 @@ import { createWatchlist } from './watchlist.js';
 import { createNewsService } from './news.js';
 import { createExplanationService, createOpenAiCompatibleProvider } from './explanation.js';
 import { createDiscoveryService } from './discovery.js';
+import { createWatchTodayService } from './watch-today.js';
 import { createInstrumentCatalogue } from './catalogue.js';
 import { getSource } from './sources/index.js';
 
 const STARTED_AT = Date.now();
+const IS_VERCEL = process.env.VERCEL === '1';
 
 const db = getDb();
 const snapshotLog = createSnapshotLog(db);
@@ -54,7 +56,7 @@ const newsService = createNewsService({ source });
  * anyone has the page open. The engine is built below; the hook reads it
  * lazily through the closure so the wiring order stays readable.
  */
-const ingestor = config.ingestEnabled
+const ingestor = config.ingestEnabled || IS_VERCEL
   ? createIngestor({
       source,
       snapshotLog,
@@ -112,6 +114,11 @@ const discoveryService = createDiscoveryService({
   snapshotLog,
   watchlist,
   source,
+});
+const watchTodayService = createWatchTodayService({
+  snapshotLog,
+  source,
+  newsService,
 });
 
 const app = express();
@@ -172,6 +179,7 @@ app.use(
     newsService,
     explanationService,
     discoveryService,
+    watchTodayService,
     instrumentCatalogue,
   }),
 );
@@ -180,20 +188,21 @@ app.use(
 // directly. One process, one origin, no CORS to reason about.
 app.use(express.static(path.join(REPO_ROOT, 'frontend')));
 
-if (source.name === 'yahoo') {
+if (source.name === 'yahoo' && !IS_VERCEL) {
   void instrumentCatalogue.refresh().catch((error) =>
     console.error('[catalogue] refresh failed:', error.message),
   );
 }
 
-const server = app.listen(config.port, async () => {
+async function startLocalServer() {
+  const server = app.listen(config.port, async () => {
   console.log(`[server] listening on http://localhost:${config.port}`);
   console.log(
     `[server] source=${source.name} interval=${config.ingestIntervalMs}ms` +
       (source.name === 'simulator' ? ` seed=${config.simSeed}` : ''),
   );
 
-  if (!ingestor) {
+  if (!config.ingestEnabled) {
     console.log('[boot] ingestion disabled (INGEST_ENABLED=false)');
     return;
   }
@@ -214,7 +223,24 @@ const server = app.listen(config.port, async () => {
   }
 
   ingestor.start();
-});
+  });
+  return server;
+}
+
+// Vercel invokes the exported Express app per request. There is no permanent
+// worker there, so seed deterministic simulator history once per warm instance
+// but never start the interval loop.
+if (IS_VERCEL) {
+  try {
+    await ingestor.backfill();
+    await ingestor.tick();
+  } catch (error) {
+    console.error('[boot] serverless simulator bootstrap failed:', error.message);
+  }
+}
+
+const server = IS_VERCEL ? null : await startLocalServer();
+export default app;
 
 /**
  * Shut down in dependency order - stop producing writes, stop accepting
@@ -228,7 +254,7 @@ function shutdown(signal, code = 0) {
   console.log(`[server] ${signal} received, shutting down`);
 
   ingestor?.stop();
-  server.close(() => {
+  server?.close(() => {
     closeDb();
     process.exit(code);
   });
