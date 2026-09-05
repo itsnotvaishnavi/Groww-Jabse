@@ -119,8 +119,8 @@ export function createWatchlist(db) {
     },
 
     /**
-     * Stamp "the user has now seen this". Called explicitly by the client
-     * rather than as a side effect of listing the watchlist - if merely
+    * Stamp "the user has now seen this". Called explicitly by the client when
+    * opening a detail view rather than as a side effect of listing the watchlist - if merely
      * fetching the page reset the baseline, the deltas would erase themselves
      * on first render and the user could never come back to them.
      */
@@ -131,7 +131,8 @@ export function createWatchlist(db) {
     },
 
     /**
-     * "Mark all as seen" - the same baseline stamp, for every symbol at once.
+    * Bulk baseline helper retained for compatibility; the primary UI opens
+    * stocks individually and does not expose this action.
      *
      * ONE instant for the whole watchlist, and one transaction. Stamping each
      * row with its own Date.now() would leave the rows milliseconds apart, and

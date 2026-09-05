@@ -21,3 +21,17 @@ test('opening a stock uses the existing viewed API', () => {
 test('the not-seen filter is not exposed as a primary control', () => {
   assert.doesNotMatch(html, /data-filter=["']unseen["']/);
 });
+
+test('expanded detail and sparklines are cached across unchanged polls', () => {
+  assert.match(app, /const detailRows = new Map\(\)/);
+  assert.match(app, /if \(cached\) \{[\s\S]*?return cached\.row;/);
+  assert.match(app, /cached\.latestTimestamp !== item\.latest\?\.timestamp/);
+  assert.match(app, /sparkline\.load\(row\.querySelector\('\.trend-slot'\), item\.symbol, latest\?\.timestamp\)/);
+});
+
+test('raw observation audit is behind analysis disclosure', () => {
+  const detail = app.slice(app.indexOf('function detailPanel'), app.indexOf('// -------------------------------------------------------------- filter'));
+  assert.match(detail, /<details class="analysis-details">/);
+  assert.match(detail, /<div class="audit__observations"><\/div>/);
+  assert.doesNotMatch(detail, /Every observation behind this price/);
+});

@@ -11,8 +11,8 @@
  * four times its usual volume.
  *
  * TIME AWAY is derived from the user's own last_viewed_at timestamps, and
- * last_viewed_at is still only written by an explicit "Mark seen". Loading this
- * summary does not consume it - if it did, the summary would be empty the
+ * last_viewed_at is still only written by an explicit stock opening. Loading
+ * this summary does not consume it - if it did, the summary would be empty the
  * moment after you read it and there would be no way back to it.
  */
 import { config } from './config.js';

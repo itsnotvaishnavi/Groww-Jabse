@@ -51,6 +51,7 @@ export function createApi({
   alertStore,
   newsService,
   explanationService,
+  discoveryService,
 }) {
   const router = express.Router();
   const sourceInfo = source.describe();
@@ -202,6 +203,11 @@ export function createApi({
   /** Suggestion list for the add-symbol box. Any valid ticker still works. */
   router.get('/symbols', (_req, res) => {
     res.json({ source: source.name, symbols: source.getSymbols() });
+  });
+
+  router.get('/discovery', (_req, res) => {
+    if (!discoveryService) return res.status(503).json({ error: 'discovery is disabled' });
+    res.json(discoveryService.build({ userId: config.devUserId, limit: 4 }));
   });
 
   /** Source-owned discovery. Results are canonical before they reach the UI. */

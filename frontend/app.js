@@ -17,6 +17,7 @@ import { createNews } from './news.js';
 import { createSearch } from './search.js';
 import { createExplanation } from './explanation.js';
 import { createSparkline } from './sparkline.js';
+import { createDiscovery } from './discovery.js';
 import { DEFAULT_SENSITIVITY, SENSITIVITY, displayGroupFor } from './sensitivity.js';
 
 const POLL_INTERVAL_MS = 5_000;
@@ -50,6 +51,7 @@ const el = {
   alertFeed: document.getElementById('alert-feed'),
   footer: document.getElementById('footer'),
   newsBody: document.getElementById('news-body'),
+  discoveryList: document.getElementById('discovery-list'),
 };
 
 /** Rows the user expanded, kept across re-renders so a poll does not collapse
@@ -194,6 +196,21 @@ async function api(path, options) {
 const news = createNews({ api, escapeHtml, whenIst, ago });
 const explanation = createExplanation({ api, escapeHtml, signed, whenIst, ago });
 const sparkline = createSparkline({ api });
+const discovery = createDiscovery({
+  api,
+  escapeHtml,
+  signed,
+  onAdd: async (symbol) => {
+    await api('/watchlist', { method: 'POST', body: JSON.stringify({ symbol }) });
+    await refresh();
+  },
+  onOpen: async (symbol) => {
+    await api('/watchlist', { method: 'POST', body: JSON.stringify({ symbol }) });
+    await api(`/watchlist/${encodeURIComponent(symbol)}/viewed`, { method: 'POST' });
+    expanded.add(symbol);
+    await refresh();
+  },
+});
 const search = createSearch({
   api,
   input: el.input,
@@ -367,8 +384,22 @@ function observedAt(timestamp) {
   return sameIstDay ? clockIst(timestamp) : whenIst(timestamp);
 }
 
-/** Reason codes that are caveats about our data rather than market findings. */
-const CAVEAT_CODES = new Set(['low_confidence', 'insufficient_data']);
+const USER_REASON_TEXT = {
+  unusual_price_movement: 'Unusually large movement for this stock.',
+  high_volume: 'Trading volume was much higher than usual.',
+  market_outperformance: 'Moved more than the market.',
+  market_underperformance: 'Moved less than the market.',
+  moved_with_market: 'Moved roughly in line with the market.',
+  sector_outperformance: 'Moved ahead of its sector peers.',
+  sector_underperformance: 'Moved behind its sector peers.',
+};
+
+function displayReasons(item) {
+  return (item.reasons ?? [])
+    .map((code) => USER_REASON_TEXT[code])
+    .filter(Boolean)
+    .slice(0, MAX_REASONS_SHOWN);
+}
 
 /** How many reason lines the main view shows before deferring to the detail. */
 const MAX_REASONS_SHOWN = 3;
@@ -390,8 +421,7 @@ function whyCell(item) {
     ? `<span class="level level--${escapeHtml(item.level)}">${escapeHtml(item.level)}</span>`
     : '';
 
-  const reasons = item.reasonText ?? [];
-  const codes = item.reasons ?? [];
+  const reasons = displayReasons(item);
   const change = item.changeSinceViewed ?? item.delta;
   const explainButton =
     change?.available &&
@@ -404,10 +434,7 @@ function whyCell(item) {
 
   if (reasons.length === 0) return `${badge}${explainButton}`;
 
-  const shown = reasons.slice(0, MAX_REASONS_SHOWN).map((text, i) => {
-    const caveat = CAVEAT_CODES.has(codes[i]) ? ' why--caveat' : '';
-    return `<li class="${caveat.trim()}">${escapeHtml(text)}</li>`;
-  });
+  const shown = reasons.map((text) => `<li>${escapeHtml(text)}</li>`);
 
   const remaining = reasons.length - shown.length;
   if (remaining > 0) {
@@ -460,12 +487,13 @@ function renderRow(item) {
     void explanation.open(item.symbol);
   });
 
-  void sparkline.load(row.querySelector('.trend-slot'), item.symbol);
+  void sparkline.load(row.querySelector('.trend-slot'), item.symbol, latest?.timestamp);
 
   row.querySelector('[data-action="remove"]').addEventListener('click', async () => {
     await api(`/watchlist/${encodeURIComponent(item.symbol)}`, { method: 'DELETE' });
     expanded.delete(item.symbol);
     panelSlots.delete(item.symbol);
+    detailRows.delete(item.symbol);
     await refresh();
   });
 
@@ -476,6 +504,7 @@ function renderRow(item) {
       // rather than held: reopening should be a clean slate, and the map must
       // not accumulate detached nodes for every row ever opened.
       panelSlots.delete(item.symbol);
+      detailRows.delete(item.symbol);
     } else {
       try {
         await api(`/watchlist/${encodeURIComponent(item.symbol)}/viewed`, { method: 'POST' });
@@ -568,23 +597,36 @@ function detailPanel(item) {
 
   const change = f.changeSinceViewed;
 
-  const reasonsList = (item.reasonText && item.reasonText.length > 0)
+  const conciseReasons = displayReasons(item);
+  const reasonsList = conciseReasons.length > 0
     ? `<ul class="detail__evidence-list">
-        ${item.reasonText.map((t) => `<li>${escapeHtml(t)}</li>`).join('')}
+        ${conciseReasons.map((text) => `<li>${escapeHtml(text)}</li>`).join('')}
        </ul>`
-    : `<p class="detail__evidence-none">No abnormal move detected. All measured signals remained within standard statistical bounds.</p>`;
+    : `<p class="detail__evidence-none">Nothing unusual detected in the available evidence.</p>`;
 
   const evidenceOverview = `<div class="detail__evidence">
     <div class="detail__evidence-head">
-      <span class="detail__evidence-badge level level--${escapeHtml(item.level)}">${escapeHtml(item.level)} ATTENTION</span>
-      <span class="detail__evidence-title">Why this stock is surfaced</span>
+      ${item.needsAttention ? `<span class="detail__evidence-badge level level--${escapeHtml(item.level)}">${escapeHtml(item.level)}</span>` : ''}
+      <span class="detail__evidence-title">Why this matters</span>
     </div>
     ${reasonsList}
   </div>`;
 
+  const simpleChange = `<div class="detail__simple-change">
+    <strong>${escapeHtml(item.symbol)}</strong>
+    <span class="detail__simple-price">${item.latest ? `₹${inr.format(item.latest.price)}` : 'Price unavailable'}</span>
+    <span class="detail__simple-delta ${change.available ? directionClass(change.absolute) : 'flat'}">
+      ${change.available ? `${pct(change.percent)} since you last looked` : 'No baseline yet — open the stock to start tracking'}
+    </span>
+  </div>`;
+
   return `<div class="detail">
     ${evidenceOverview}
-    ${formula}
+    ${simpleChange}
+    <details class="analysis-details">
+      <summary>View analysis details</summary>
+      <div class="detail detail--technical">
+      ${formula}
 
     <div class="detail__block">
       <div class="detail__title">Since you last looked</div>
@@ -646,7 +688,10 @@ function detailPanel(item) {
       }
       ${kv('observations in window', String(item.observationCount))}
       ${kv('already surfaced', item.alreadySurfaced ? 'yes' : 'no')}
+      <div class="audit__observations"></div>
     </div>
+      </div>
+    </details>
   </div>`;
 }
 
@@ -668,6 +713,7 @@ function detailPanel(item) {
  * one level deeper.
  */
 const panelSlots = new Map();
+const detailRows = new Map();
 
 function slotsFor(symbol) {
   let slots = panelSlots.get(symbol);
@@ -682,6 +728,15 @@ function slotsFor(symbol) {
 }
 
 function detailRow(item) {
+  const cached = detailRows.get(item.symbol);
+  if (cached) {
+    if (cached.latestTimestamp !== item.latest?.timestamp) {
+      cached.latestTimestamp = item.latest?.timestamp;
+      void chart.load(cached.row.querySelector('.chart-slot'), item.symbol);
+    }
+    return cached.row;
+  }
+
   const row = node(
     `<tr class="wl__audit"><td colspan="6" class="audit">
        <div class="chart-slot"></div>
@@ -692,7 +747,6 @@ function detailRow(item) {
        </div>
        <div class="panel-slots"></div>
        ${detailPanel(item)}
-       <div class="audit__observations">Loading observations…</div>
      </td></tr>`,
   );
 
@@ -701,7 +755,7 @@ function detailRow(item) {
 
   void chart.load(row.querySelector('.chart-slot'), item.symbol);
   void news.load(row.querySelector('.stock-news-slot'), item.symbol);
-  void loadAudit(row.querySelector('.audit__observations'), item.symbol);
+  detailRows.set(item.symbol, { row, latestTimestamp: item.latest?.timestamp });
 
   /**
    * Both panels are loaded on demand rather than with the row. The intraday
@@ -729,6 +783,13 @@ function detailRow(item) {
         panels.loadAlertFeed(el.alertFeed),
       );
     }
+  });
+
+  const analysisDetails = row.querySelector('.analysis-details');
+  analysisDetails.addEventListener('toggle', () => {
+    if (!analysisDetails.open || analysisDetails.dataset.loaded === 'true') return;
+    analysisDetails.dataset.loaded = 'true';
+    void loadAudit(row.querySelector('.audit__observations'), item.symbol);
   });
 
   return row;
@@ -1256,8 +1317,8 @@ let simulatedAwayMs = null;
  * The first summary fetch of a session records - that is the moment the user is
  * genuinely shown the signals. Subsequent polls do not, or a 5-second poll would
  * mark everything surfaced within seconds of arriving and the distinction would
- * be worthless. Note this is separate from last_viewed_at, which only "Mark
- * seen" writes.
+ * be worthless. Note this is separate from last_viewed_at, which only an
+ * explicit stock opening writes.
  */
 let awayRecorded = false;
 
@@ -1553,5 +1614,6 @@ document.addEventListener('keydown', (event) => {
 await loadFeatured();
 await loadScenarios();
 void news.load(el.newsBody);
+void discovery.load(el.discoveryList);
 await refresh();
 setInterval(refresh, POLL_INTERVAL_MS);

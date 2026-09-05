@@ -270,10 +270,7 @@ export function createChart(deps) {
       );
 
       const body = data.insufficientPoints
-        ? `<p class="chart__empty">
-             Only ${data.observed} observation${data.observed === 1 ? '' : 's'} in this
-             window — at least ${data.minPoints} are needed before a line means anything.
-           </p>`
+        ? '<p class="chart__empty">Not enough recent data to show a trend.</p>'
         : svgFor(data);
 
       container.innerHTML = `${headFor(symbol, data.range.label)}${body}${metaFor(data)}`;

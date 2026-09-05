@@ -20,6 +20,7 @@ import { createSummaryService } from './summary.js';
 import { createWatchlist } from './watchlist.js';
 import { createNewsService } from './news.js';
 import { createExplanationService, createOpenAiCompatibleProvider } from './explanation.js';
+import { createDiscoveryService } from './discovery.js';
 import { getSource } from './sources/index.js';
 
 const STARTED_AT = Date.now();
@@ -100,6 +101,12 @@ const explanationService = createExplanationService({
     model: config.ai.model,
   }),
 });
+const discoveryService = createDiscoveryService({
+  engine,
+  snapshotLog,
+  watchlist,
+  source,
+});
 
 const app = express();
 app.use(express.json());
@@ -158,6 +165,7 @@ app.use(
     alertStore,
     newsService,
     explanationService,
+    discoveryService,
   }),
 );
 

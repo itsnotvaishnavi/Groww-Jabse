@@ -481,6 +481,16 @@ with featured names plus stable synthetic aliases for cross-market examples.
 Selected results use the same canonical identity as market data and the existing
 watchlist API.
 
+### You might want to watch
+
+The compact discovery section surfaces at most four source-known symbols that
+are not already watched. Candidates must have fresh live/delayed data, reach
+the existing engine's attention verdict, and share a sector with something in
+the user's watchlist. Followed-sector relevance is ranked before the existing
+meaningfulness score, so this is watchlist discovery rather than a list of raw
+gainers. Each result states why it appeared, and adding it does not establish a
+`last_viewed_at` baseline; opening its detail does.
+
 ### Supporting news and contextual explanation
 
 The optional **Latest News** surface is supporting context, not the product's
@@ -693,6 +703,7 @@ before the end, outside the engine's fifteen-minute anomaly horizon, so it score
 | `GET` | `/api/sectors` | The static sector map |
 | `GET` | `/api/symbols` | Suggestion list |
 | `GET` | `/api/symbols/search?q=` | Active-source company/security discovery |
+| `GET` | `/api/discovery` | Deterministic “You might want to watch” candidates |
 | `GET` | `/api/news` | Optional supporting news (`?symbol=&limit=`) |
 | `GET` | `/api/explanation/:symbol` | Optional contextual explanation for an attention-worthy move |
 | `POST` | `/api/watchlist` | Add (`201` new, `200` already present) |

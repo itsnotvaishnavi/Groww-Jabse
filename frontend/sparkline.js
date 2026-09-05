@@ -59,14 +59,38 @@ export function renderSparkline(data, symbol = 'stock') {
 }
 
 export function createSparkline({ api }) {
-  async function load(container, symbol) {
+  const cache = new Map();
+  const inflight = new Map();
+
+  async function load(container, symbol, revision = null) {
+    const cached = cache.get(symbol);
+    if (cached?.revision === revision) {
+      container.innerHTML = cached.markup;
+      return;
+    }
+
+    const pending = inflight.get(symbol);
+    if (pending) {
+      container.innerHTML = pending.markup;
+      return pending.promise.then((markup) => {
+        container.innerHTML = markup;
+      });
+    }
+
     container.replaceChildren();
+    const request = {};
+    request.promise = api(`/chart/${encodeURIComponent(symbol)}?range=1d`)
+      .then((data) => renderSparkline(data, symbol))
+      .catch(() => '');
+    request.markup = cached?.markup ?? '';
+    inflight.set(symbol, request);
+
     try {
-      const data = await api(`/chart/${encodeURIComponent(symbol)}?range=1d`);
-      const markup = renderSparkline(data, symbol);
-      if (markup) container.innerHTML = markup;
-    } catch {
-      // A sparkline is optional context; leave the cell quiet when unavailable.
+      const markup = await request.promise;
+      cache.set(symbol, { revision, markup });
+      container.innerHTML = markup;
+    } finally {
+      inflight.delete(symbol);
     }
   }
 
