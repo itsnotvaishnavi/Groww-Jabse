@@ -188,6 +188,21 @@ app.use(
 // directly. One process, one origin, no CORS to reason about.
 app.use(express.static(path.join(REPO_ROOT, 'frontend')));
 
+/**
+ * SPA fallback for the single-page frontend.
+ *
+ * The dashboard is one HTML page with no client-side router, so a deep link
+ * such as /history must be served the same entry point as /. Static assets
+ * are already handled by express.static above; anything else that is not an
+ * API path gets index.html. API paths are excluded so an unknown /api/*
+ * still 404s as JSON instead of being swallowed by the HTML fallback.
+ */
+app.use((req, res, next) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+  if (req.path === '/api' || req.path.startsWith('/api/')) return next();
+  res.sendFile(path.join(REPO_ROOT, 'frontend', 'index.html'));
+});
+
 if (source.name === 'yahoo' && !IS_VERCEL) {
   void instrumentCatalogue.refresh().catch((error) =>
     console.error('[catalogue] refresh failed:', error.message),
