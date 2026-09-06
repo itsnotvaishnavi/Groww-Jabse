@@ -4,7 +4,9 @@
 
 > **What meaningfully changed since I last looked?**
 
-Live Demo — jabse.onrender.com
+**Live Demo — jabse.onrender.com**
+
+
 It compares each stock with the last observation available when the user
 explicitly opened that stock, then explains what deserves attention. It is not
 a screener, trading tool, forecast, or investment recommendation.
