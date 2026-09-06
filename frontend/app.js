@@ -1222,10 +1222,6 @@ async function loadHistory() {
   try {
     const query = historyLevel ? `?level=${encodeURIComponent(historyLevel)}` : '';
     const { events, counts } = await api(`/history${query}`);
-    if (el.historySection) {
-      el.historySection.hidden = (counts.all === 0);
-    }
-    if (counts.all === 0) return;
 
     for (const chip of el.historyChips.querySelectorAll('.chip[data-history]')) {
       const key = chip.dataset.history;
@@ -1242,7 +1238,7 @@ async function loadHistory() {
        */
       el.historyBody.innerHTML = `<p class="history__empty">${
         counts.all === 0
-          ? 'Nothing surfaced yet. When something meaningful changes while you are away, it will be recorded here.'
+          ? 'No changes have been surfaced yet.<br>Jabse will record meaningful changes as they occur.'
           : 'No events at this level. Try “All”.'
       }</p>`;
       return;

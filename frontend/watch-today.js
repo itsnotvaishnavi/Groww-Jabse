@@ -57,9 +57,7 @@ export function createWatchToday({ api, escapeHtml, onAdd, onOpen }) {
       })
       .join('');
 
-    bodyEl.innerHTML = `
-      <div class="watch-today-list">${itemsHtml}</div>
-      <a href="#discovery-section" class="watch-today__all" id="watch-today-view-all">View all signals →</a>`;
+    bodyEl.innerHTML = `<div class="watch-today-list">${itemsHtml}</div>`;
 
     // Hook add buttons
     for (const button of bodyEl.querySelectorAll('[data-add]:not([disabled])')) {
@@ -85,18 +83,6 @@ export function createWatchToday({ api, escapeHtml, onAdd, onOpen }) {
       button.addEventListener('click', async () => {
         const symbol = button.dataset.open;
         await onOpen(symbol);
-      });
-    }
-
-    // Hook view all signals link
-    const viewAllLink = bodyEl.querySelector('#watch-today-view-all');
-    if (viewAllLink) {
-      viewAllLink.addEventListener('click', (e) => {
-        e.preventDefault();
-        const target = document.getElementById('discovery-section');
-        if (target) {
-          target.scrollIntoView({ behavior: 'smooth' });
-        }
       });
     }
   }

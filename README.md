@@ -45,12 +45,16 @@ volatility, and shows the evidence behind each result.
 - **Broad search:** local/cached NSE/BSE equity-catalogue search with ticker,
   company, exchange, series, and canonical symbol identity. Only selected
   results enter the watchlist and monitoring path.
-- **You might want to watch:** at most four discovery candidates based on the
-  user’s followed sectors and existing engine activity.
 - **What to Watch Today:** a compact right-sidebar card surfacing up to three
   market-wide candidates where multiple observable signals agree. It is
   deterministic market-signal discovery, not a prediction or recommendation.
+- **Change history:** a timeline of what Jabse actually surfaced, filterable by
+  High and Meaningful, preserving the reasons recorded at the time.
+- **Alerts:** threshold crossings with hysteresis and data-quality gating, so a
+  stale price or a closed market never fires anything.
 - **Latest News:** optional supporting context, never part of the score.
+- **Explicit data freshness:** every price is paired with its age, source, and
+  freshness state, and any row expands to the raw observations behind it.
 - **Optional contextual AI:** short explanations only for attention-worthy
   moves when relevant verified news exists. AI never decides importance.
 
@@ -138,24 +142,26 @@ Jabse evidence and watchlist continue working.
 Configure the optional OpenAI-compatible provider with `AI_API_KEY`, plus
 optional `AI_ENDPOINT` and `AI_MODEL`. The core app works without them.
 
-## Discovery
+## Change History
 
-**You might want to watch** is a bounded discovery surface, not a
-recommendation engine. It:
+**Change history** is the record of what Jabse actually told the user, not a
+second log of everything the market did. An entry exists only because a signal
+was surfaced, so the timeline answers “what has this app claimed mattered?”
 
-1. Starts with the active source’s known universe.
-2. Removes symbols already in the user’s watchlist.
-3. Excludes stale, closed, missing, or insufficient data.
-4. Reuses the existing engine’s attention verdict and reasons.
-5. Prefers candidates sharing sectors with watched stocks.
-6. Ranks followed-sector relevance before existing meaningfulness.
+- Each event stores the level, reason codes, and since-viewed change **as they
+  were at the moment it was surfaced**. Reasons are never recomputed later, so
+  the timeline cannot be rewritten by fresher data or a changed threshold.
+- Events are ordered by when a signal first became news. Re-presenting the same
+  unchanged event on a later page load is not a second event; it increments a
+  visible “shown N×” count instead.
+- Only `HIGH` and `MODERATE` can appear, because nothing quiet is ever
+  surfaced. The absence of change is not an event.
+- An event that had no baseline at the time says so, rather than showing a zero
+  nobody measured.
+- Filter chips carry counts over the unfiltered window, and the section stays
+  visible with an explicit empty state before anything has been surfaced.
 
-The simulator remains offline and deterministic. Yahoo can use its broader
-search/discovery endpoint. Adding a suggestion uses the existing watchlist API
-and does not establish a viewing baseline; opening it does.
-
-If no candidate meets the requirements, the UI says **“Nothing new stands out
-right now.”**
+It is served by `GET /api/history`.
 
 ## What to Watch Today
 
@@ -256,8 +262,11 @@ Data Sources
   surfaced-event history.
 - `watchlist.js`, `summary.js`, `alerts.js`: user baselines, return summary,
   caught-up state, and alert hysteresis.
-- `chart.js`, `intraday.js`, `news.js`, `discovery.js`: additive presentation
+- `chart.js`, `intraday.js`, `news.js`, `watch-today.js`: additive presentation
   services that do not alter engine decisions.
+- `discovery.js`: an internal candidate-selection service behind
+  `GET /api/discovery`. It is retained and tested, but has no dedicated
+  frontend surface; **What to Watch Today** is the shipped discovery UI.
 - `catalogue.js`: cached reference instrument catalogue used only for local
   search; it is separate from watchlist and snapshot storage.
 - `api.js`: dependency-injected HTTP contract.
@@ -266,11 +275,12 @@ Data Sources
 
 Vanilla ES modules keep the application small and transparent:
 
-- `app.js`: polling, filters, grouping, watchlist rendering, and actions.
+- `app.js`: polling, filters, grouping, watchlist rendering, change history,
+  and actions.
 - `chart.js` and `sparkline.js`: chart and compact trend rendering.
 - `panels.js`: intraday analysis and alerts.
-- `search.js`, `discovery.js`, `news.js`, `explanation.js`: isolated additive
-  product surfaces.
+- `watch-today.js`: the What to Watch Today sidebar card.
+- `search.js`, `news.js`, `explanation.js`: isolated additive product surfaces.
 - `sensitivity.js`: display-only sensitivity mapping.
 - `styles.css`: responsive visual system.
 
@@ -345,8 +355,9 @@ BACKFILL_HOURS=6 npm start
 | `GET` | `/api/chart/:symbol` | Chart data for `since_viewed` or `1d` |
 | `GET` | `/api/intraday/:symbol` | Intraday analysis |
 | `GET` | `/api/symbols/search?q=` | Local/cached NSE/BSE equity catalogue search |
-| `GET` | `/api/discovery` | Watchlist discovery candidates |
+| `GET` | `/api/history` | Change history of surfaced events |
 | `GET` | `/api/watch-today` | Market-wide “What to Watch Today” candidates |
+| `GET` | `/api/discovery` | Internal candidate service; no dedicated UI surface |
 | `GET` | `/api/news?symbol=` | Supporting news context |
 | `GET` | `/api/explanation/:symbol` | Optional contextual explanation |
 | `POST` | `/api/watchlist` | Add a canonical symbol |
@@ -365,13 +376,15 @@ Run the full suite with:
 npm test
 ```
 
-The current suite contains **269 tests** covering:
+The current suite contains **274 tests passing** and covers:
 
 - engine scoring, levels, confidence, missing signals, floors, and determinism
 - snapshot immutability, canonical symbols, freshness, and ingestion failures
 - viewing baselines, summaries, caught-up state, charts, and alerts
-- search discovery, provider failure, news isolation, and contextual AI rules
-- watchlist discovery ranking, exclusions, baseline safety, and empty states
+- search, provider failure, news isolation, and contextual AI rules
+- What to Watch Today: multi-signal confirmation, ranking determinism,
+  exclusions, baseline safety, freshness states, and empty states
+- the internal discovery service: ranking, exclusions, and baseline safety
 - sparkline transformation, colors, gaps, and insufficient history
 - frontend contracts for progressive disclosure and stable expanded details
 
@@ -396,7 +409,8 @@ personal viewing baseline for each stock and compares new observations against
 what the user could actually have seen. A deterministic engine combines
 stock-specific price and volume anomalies with market and sector context,
 confidence, freshness, and evidence-based explanations. Compact charts,
-source-aware search, watchlist discovery, alerts, and supporting news make the
-result useful without turning it into a screener or trading tool. Optional AI
+source-aware search, a change history of everything it has surfaced, market-wide
+**What to Watch Today** signals, alerts, and supporting news make the result
+useful without turning it into a screener or trading tool. Optional AI
 can summarize verified context, but never decides what matters. The surface is
 simple; the reasoning underneath is auditable.
