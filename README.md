@@ -1,5 +1,8 @@
 # Jabse
 
+![Node](https://img.shields.io/badge/Node-%E2%89%A5%2022-339933?logo=node.js&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-274%20passing-brightgreen)
+
 **जब से** (*jab se*) means "since". Jabse is a watchlist that answers:
 
 > **What meaningfully changed since I last looked?**
@@ -13,6 +16,42 @@ explicitly opened that stock, then explains what deserves attention.
 
 Built for Groww Code 2026. Node 22+, Express, SQLite, vanilla ES modules, and
 no frontend build step.
+
+## Why This Is Different
+
+Four decisions do most of the work. Each is expanded in
+[Key Engineering Decisions](#key-engineering-decisions).
+
+- **Personal baselines are explicit.** Only opening a stock advances its
+  viewing epoch; page reads never erase the comparison users came to inspect.
+- **Missing is not zero.** Unavailable signals are removed from the available
+  weight rather than counted as a zero that would quietly drag a score down.
+- **Score and confidence are separate.** A meaningful event can still be based
+  on stale or thin data, and users should see both facts.
+- **Relative signals cannot promote past `LOW`.** When a stock's own movement
+  and user-visible change are negligible, market context is never allowed to
+  masquerade as stock-specific news.
+
+## Table of Contents
+
+- [What It Solves](#what-it-solves)
+- [Product](#product)
+- [What Makes It Different](#what-makes-it-different)
+- [Meaningful Change Engine](#meaningful-change-engine)
+- [Data Reliability](#data-reliability)
+- [Viewing Baseline](#viewing-baseline)
+- [News & AI](#news--ai)
+- [Change History](#change-history)
+- [What to Watch Today](#what-to-watch-today)
+- [Architecture](#architecture)
+- [Key Engineering Decisions](#key-engineering-decisions)
+- [Demo Scenarios](#demo-scenarios)
+- [Setup](#setup)
+- [Verify It Yourself](#verify-it-yourself)
+- [API Overview](#api-overview)
+- [Testing](#testing)
+- [Known Limitations](#known-limitations)
+- [Submission Pitch](#submission-pitch)
 
 ## What It Solves
 
@@ -29,6 +68,9 @@ what changed while they were away, ranks meaningfulness rather than raw
 volatility, and shows the evidence behind each result.
 
 ## Product
+
+<!-- TODO: screenshot of the watchlist view with Needs Attention grouping -->
+<!-- TODO: screenshot or GIF of expanding a row to reveal the evidence and raw observations -->
 
 - **Since you last looked:** the primary watchlist question and headline.
 - **Opening a stock means seeing it:** opening a detail view records that
@@ -71,6 +113,28 @@ biggest mover, and a market move is not automatically treated as stock news.
 
 The backend engine is the source of truth. The browser renders its output and
 does not recompute scores or thresholds.
+
+```mermaid
+flowchart TD
+    P["Price anomaly"] --> W
+    V["Volume anomaly"] --> W
+    M["Market-relative"] --> W
+    S["Sector-relative"] --> W
+
+    W["Weighted and renormalised<br/>missing is not zero"]
+
+    W --> SCORE["Meaningfulness score<br/>0 to 1"]
+    W --> CONF["Confidence<br/>calculated separately"]
+
+    SCORE --> FLOOR{"Own movement and<br/>since-viewed change<br/>both negligible?"}
+    FLOOR -->|yes| CAP["Held at LOW"]
+    FLOOR -->|no| LEVEL["LOW / MODERATE / HIGH"]
+
+    SV["Change since viewed<br/>personal frame of reference"] -.-> OUT
+    LEVEL --> OUT["Reason codes, reason text,<br/>needsAttention"]
+    CAP --> OUT
+    CONF --> OUT
+```
 
 Four scored signals are evaluated independently:
 
@@ -165,6 +229,8 @@ It is served by `GET /api/history`.
 
 ## What to Watch Today
 
+<!-- TODO: screenshot of the What to Watch Today sidebar card with candidates and signals -->
+
 **What to Watch Today** is a compact right-sidebar card that answers a
 different question from the personal watchlist:
 
@@ -240,15 +306,15 @@ test suite.
 
 ## Architecture
 
-```text
-Data Sources
-    -> Ingestion and backfill
-    -> Append-only SQLite snapshot log
-    -> Fixed bars and feature extraction
-    -> Meaningful Change Engine
-    -> Ranking, summary, alerts, discovery
-    -> Express API
-    -> Vanilla frontend
+```mermaid
+flowchart TD
+    A["Data Sources"] --> B["Ingestion and backfill"]
+    B --> C["Append-only SQLite snapshot log"]
+    C --> D["Fixed bars and feature extraction"]
+    D --> E["Meaningful Change Engine"]
+    E --> F["Ranking, summary, alerts, discovery"]
+    F --> G["Express API"]
+    G --> H["Vanilla frontend"]
 ```
 
 ### Backend
@@ -345,6 +411,37 @@ INGEST_ENABLED=false npm start
 SIM_SEED=another-seed npm start
 BACKFILL_HOURS=6 npm start
 ```
+
+## Verify It Yourself
+
+Every claim in this README is checkable from a clean clone. No API keys, no
+services to provision, no network access required for the test suite:
+
+```bash
+git clone https://github.com/itsnotvaishnavi/Groww-Jabse.git
+cd Groww-Jabse
+npm install
+npm test
+```
+
+The suite finishes in seconds and ends with:
+
+```text
+ℹ tests 274
+ℹ pass 274
+ℹ fail 0
+```
+
+Then start it and look at the real thing:
+
+```bash
+npm start                         # http://localhost:3000
+```
+
+The default deterministic simulator means a fresh clone has a populated,
+reproducible market immediately — the same seed, symbol, and instant always
+produce the same observation, so the numbers on your screen are the numbers
+this README describes.
 
 ## API Overview
 
